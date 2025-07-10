@@ -56,6 +56,7 @@ def check_single_proxy(proxy_string, timeout=8):
         test_urls = [
             'http://httpbin.org/ip',
             'http://ip-api.com/json',
+            'http://icanhazip.com'
         ]
         
         # Setup proxy
@@ -364,6 +365,9 @@ def home():
                 <button class="btn btn-success" onclick="forceRefresh()">🔄 Force Refresh</button>
                 <button class="btn" onclick="testAPI()">🧪 Test API</button>
                 <button class="btn" onclick="toggleLogs()">📋 Show/Hide Logs</button>
+                <button class="btn" onclick="debugStatus()" style="background: #ff6b6b;">🔍 Debug Status</button>
+                <button class="btn" onclick="testFetch()" style="background: #4ecdc4;">📥 Test Fetch</button>
+                <button class="btn" onclick="testValidation()" style="background: #ffe66d;">⚡ Test Validation</button>
             </div>
             
             <div class="logs" id="logs-container" style="display: none;">
@@ -390,6 +394,24 @@ def home():
                 <span class="method get">GET</span>
                 <strong>/api/proxy/force-refresh</strong>
                 <p>Buộc refresh proxy ngay lập tức</p>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <strong>/api/proxy/debug</strong>
+                <p>Debug - xem toàn bộ service status và cache</p>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method get">POST</span>
+                <strong>/api/proxy/test-fetch</strong>
+                <p>Test fetch proxy từ 1 source để debug</p>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method get">POST</span>
+                <strong>/api/proxy/test-single</strong>
+                <p>Test validation logic với proxy mẫu</p>
             </div>
             
             <h3>🔗 Proxy Sources:</h3>
@@ -487,6 +509,58 @@ def home():
                     .catch(e => {{
                         document.getElementById('logs').innerHTML = '<div class="log-item log-error">Error loading logs</div>';
                     }});
+            }}
+            
+            function debugStatus() {{
+                fetch('/api/proxy/debug')
+                    .then(r => r.json())
+                    .then(data => {{
+                        alert('🔍 DEBUG STATUS:\\n' +
+                              'Service Status: ' + JSON.stringify(data.service_status, null, 2) + '\\n\\n' +
+                              'Proxy Cache: ' + JSON.stringify(data.proxy_cache, null, 2) + '\\n\\n' +
+                              'Current Time: ' + data.current_time);
+                    }})
+                    .catch(e => alert('Debug Error: ' + e));
+            }}
+            
+            function testFetch() {{
+                document.getElementById('service-status').innerHTML = 
+                    '<span class="status-indicator status-active"></span>Testing fetch...';
+                
+                fetch('/api/proxy/test-fetch', {{method: 'POST'}})
+                    .then(r => r.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            alert('📥 FETCH TEST SUCCESS:\\n' +
+                                  'Source: ' + data.source + '\\n' +
+                                  'Status: ' + data.status_code + '\\n' +
+                                  'Total Lines: ' + data.total_lines + '\\n' +
+                                  'Valid Proxies: ' + data.valid_proxies_found + '\\n' +
+                                  'Sample: ' + data.sample_proxies.join(', '));
+                        }} else {{
+                            alert('❌ FETCH TEST FAILED:\\n' + data.error);
+                        }}
+                    }})
+                    .catch(e => alert('Fetch Test Error: ' + e));
+            }}
+            
+            function testValidation() {{
+                document.getElementById('service-status').innerHTML = 
+                    '<span class="status-indicator status-active"></span>Testing validation...';
+                
+                fetch('/api/proxy/test-single', {{method: 'POST'}})
+                    .then(r => r.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            let results = data.test_results.map(r => 
+                                r.proxy + ' = ' + r.status.toUpperCase()
+                            ).join('\\n');
+                            alert('⚡ VALIDATION TEST:\\n' + results + '\\n\\nCheck logs for details!');
+                        }} else {{
+                            alert('❌ VALIDATION TEST FAILED:\\n' + data.error);
+                        }}
+                    }})
+                    .catch(e => alert('Validation Test Error: ' + e));
             }}
             
             // Auto-update
@@ -632,6 +706,119 @@ def get_logs():
         })
         
     except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/proxy/debug', methods=['GET'])
+def debug_status():
+    """API debug - kiểm tra tất cả thông tin service"""
+    try:
+        return jsonify({
+            'success': True,
+            'service_status': service_status,
+            'proxy_cache': {
+                'http_count': len(proxy_cache.get('http', [])),
+                'last_update': proxy_cache.get('last_update'),
+                'total_checked': proxy_cache.get('total_checked', 0),
+                'alive_count': proxy_cache.get('alive_count', 0)
+            },
+            'current_time': datetime.now().isoformat(),
+            'sources': list(PROXY_SOURCE_LINKS.keys())
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/proxy/test-single', methods=['POST'])
+def test_single_proxy():
+    """API test 1 proxy để debug validation logic"""
+    try:
+        # Test với proxy mẫu
+        test_proxies = [
+            "8.8.8.8:80",  # Google DNS (sẽ fail vì không phải proxy)
+            "proxy.example.com:8080",  # Fake proxy
+            "1.1.1.1:80"   # Cloudflare DNS (sẽ fail)
+        ]
+        
+        results = []
+        for proxy in test_proxies:
+            add_log(f"🧪 Test proxy: {proxy}", "info")
+            result = check_single_proxy(proxy, timeout=5)  # Shorter timeout for test
+            results.append({
+                'proxy': proxy,
+                'result': result,
+                'status': 'alive' if result else 'dead'
+            })
+            add_log(f"🧪 Result: {proxy} = {'ALIVE' if result else 'DEAD'}", "success" if result else "error")
+        
+        return jsonify({
+            'success': True,
+            'test_results': results,
+            'message': f'Tested {len(test_proxies)} proxies'
+        })
+        
+    except Exception as e:
+        add_log(f"❌ Error in test-single: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/proxy/test-fetch', methods=['POST'])
+def test_fetch_sources():
+    """API test fetch từ 1 source để debug"""
+    try:
+        # Test với 1 source đầu tiên
+        source_name = list(PROXY_SOURCE_LINKS.keys())[0]
+        source_url = PROXY_SOURCE_LINKS[source_name]
+        
+        add_log(f"🧪 Test fetch từ {source_name}: {source_url}", "info")
+        
+        response = requests.get(source_url, timeout=10)
+        
+        if response.status_code == 200:
+            content = response.text
+            lines = content.strip().split('\n')
+            
+            valid_proxies = []
+            for line in lines[:10]:  # Only check first 10 lines
+                line = line.strip()
+                if ':' in line:
+                    try:
+                        host, port = line.split(':')
+                        if len(host.split('.')) == 4 and port.isdigit():
+                            valid_proxies.append(line)
+                    except:
+                        continue
+            
+            add_log(f"✅ {source_name}: Tìm thấy {len(valid_proxies)} proxy valid từ {len(lines)} dòng", "success")
+            
+            return jsonify({
+                'success': True,
+                'source': source_name,
+                'url': source_url,
+                'status_code': response.status_code,
+                'total_lines': len(lines),
+                'valid_proxies_found': len(valid_proxies),
+                'sample_proxies': valid_proxies[:5],
+                'raw_sample': lines[:5]
+            })
+        else:
+            add_log(f"❌ {source_name}: HTTP {response.status_code}", "error")
+            return jsonify({
+                'success': False,
+                'source': source_name,
+                'status_code': response.status_code,
+                'error': f'HTTP {response.status_code}'
+            })
+        
+    except Exception as e:
+        add_log(f"❌ Error test-fetch: {str(e)}", "error")
         return jsonify({
             'success': False,
             'error': str(e)
