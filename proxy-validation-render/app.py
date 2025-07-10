@@ -30,51 +30,125 @@ PROXY_SOURCE_LINKS = {
     "Server Hotel": "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt"
 }
 
-def check_single_proxy(proxy_string, timeout=8):
-    """Kiểm tra 1 proxy có sống không - giống logic trong tool"""
+def parse_proxy_line(proxy_string, default_type="auto"):
+    """Parse proxy line giống y hệt tool - auto detect protocol"""
     try:
-        if ':' not in proxy_string:
-            return None
-            
-        # Parse proxy format: host:port hoặc username:password@host:port
+        add_log(f"🔍 Parsing proxy: {proxy_string}", "info")
+        
+        # Trường hợp username:password@host:port
         if '@' in proxy_string:
-            auth_part, host_port = proxy_string.split('@')
-            if ':' in auth_part:
-                username, password = auth_part.split(':')
+            auth, hostport = proxy_string.split('@', 1)
+            if ':' in auth:
+                username, password = auth.split(':', 1)
             else:
-                username, password = auth_part, ""
+                username, password = auth, ""
+            
+            if ':' in hostport:
+                host, port = hostport.split(':', 1)
+            else:
+                add_log(f"❌ Invalid format: no port in {hostport}", "error")
+                return None
+        # Trường hợp host:port
+        elif ':' in proxy_string:
+            username, password = "", ""
+            host, port = proxy_string.split(':', 1)
         else:
-            username, password = None, None
-            host_port = proxy_string
-
-        if ':' not in host_port:
+            add_log(f"❌ Invalid format: no colon in {proxy_string}", "error")
             return None
-            
-        host, port = host_port.strip().split(':')
         
-        # Test URLs 
-        test_urls = [
-            'http://httpbin.org/ip',
-            'http://ip-api.com/json',
-            'http://icanhazip.com'
-        ]
-        
-        # Setup proxy
-        if username and password:
-            proxy_url = f"http://{username}:{password}@{host}:{port}"
+        # Auto-detect protocol dựa trên port (giống tool)
+        if default_type == "auto":
+            port_num = int(port)
+            if port_num in [80, 8080, 3128]:
+                proxy_type = "http"
+            elif port_num in [443, 8443]:
+                proxy_type = "https"
+            elif port_num in [1080, 1081]:
+                proxy_type = "socks5"
+            elif port_num in [1090, 4145]:
+                proxy_type = "socks4"
+            else:
+                proxy_type = "http"  # Default HTTP
         else:
-            proxy_url = f"http://{host}:{port}"
-            
-        proxies = {
-            'http': proxy_url,
-            'https': proxy_url
+            proxy_type = default_type
+        
+        add_log(f"✅ Parsed: {host}:{port} as {proxy_type} protocol", "success")
+        
+        return {
+            'host': host,
+            'port': port,
+            'username': username,
+            'password': password,
+            'type': proxy_type,
+            'proxy_str': f"{username}:{'*'*len(password)}@{host}:{port}" if username else f"{host}:{port}"
         }
         
+    except Exception as e:
+        add_log(f"❌ Parse error for '{proxy_string}': {str(e)}", "error")
+        return None
+
+def check_single_proxy(proxy_string, timeout=8):
+    """Kiểm tra 1 proxy - giống y hệt logic tool"""
+    add_log(f"🧪 Checking proxy: {proxy_string}", "info")
+    
+    # Parse proxy giống tool
+    parsed = parse_proxy_line(proxy_string, "auto")
+    if not parsed:
+        add_log(f"❌ Failed to parse: {proxy_string}", "error")
+        return None
+    
+    host = parsed['host']
+    port = parsed['port']
+    proxy_type = parsed['type']
+    username = parsed['username']
+    password = parsed['password']
+    
+    add_log(f"🔧 Testing {host}:{port} as {proxy_type} protocol", "info")
+    
+    result = {
+        'host': host,
+        'port': int(port),
+        'type': proxy_type,
+        'username': username,
+        'password': password,
+        'proxy_str': parsed['proxy_str'],
+        'live': False,
+        'latency': 0,
+        'ip': None,
+        'error': None,
+        'speed': 0,
+        'status': 'dead',
+        'checked_at': datetime.now().isoformat(),
+        'proxy_string': f"{host}:{port}",
+        'full_proxy': proxy_string,
+        'has_auth': bool(username and password)
+    }
+    
+    # Setup proxy URL giống tool
+    if username:
+        proxy_url = f"{proxy_type}://{username}:{password}@{host}:{port}"
+    else:
+        proxy_url = f"{proxy_type}://{host}:{port}"
+        
+    proxies = {
+        "http": proxy_url,
+        "https": proxy_url
+    }
+    
+    # Test URLs giống tool (ipify chính xác như tool)
+    test_urls = [
+        "https://api.ipify.org?format=text",  # Primary - giống tool
+        "https://api.elevenlabs.io/v1/models",  # ElevenLabs test
+        "https://httpbin.org/ip"  # Fallback
+    ]
+    
+    try:
         start_time = time.time()
         
-        # Test proxy với multiple URLs
-        for test_url in test_urls:
+        for i, test_url in enumerate(test_urls):
             try:
+                add_log(f"🌐 Testing {host}:{port} với {test_url}", "info")
+                
                 response = requests.get(
                     test_url,
                     proxies=proxies,
@@ -82,38 +156,90 @@ def check_single_proxy(proxy_string, timeout=8):
                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
                 )
                 
-                if response.status_code == 200:
-                    speed = round(time.time() - start_time, 2)
-                    
-                    # Get proxy IP
-                    try:
-                        ip_data = response.json()
-                        proxy_ip = ip_data.get('origin', ip_data.get('query', ip_data.get('ip', 'unknown')))
-                        # Clean IP (remove port if present)
-                        if ',' in proxy_ip:
-                            proxy_ip = proxy_ip.split(',')[0]
-                    except:
-                        proxy_ip = 'unknown'
-                    
-                    return {
-                        'host': host,
-                        'port': int(port),
-                        'type': 'http',
-                        'speed': speed,
-                        'status': 'alive',
-                        'ip': proxy_ip,
-                        'checked_at': datetime.now().isoformat(),
-                        'proxy_string': f"{host}:{port}",
-                        'full_proxy': proxy_string,
-                        'has_auth': bool(username and password)
-                    }
-            except:
-                continue
+                end_time = time.time()
+                latency = round((end_time - start_time) * 1000)  # milliseconds
+                speed = round(end_time - start_time, 2)  # seconds
                 
+                # Handle response giống tool
+                if "api.ipify.org" in test_url:
+                    if response.status_code == 200:
+                        ip = response.text.strip()
+                        add_log(f"✅ IPIFY SUCCESS: {host}:{port} → IP: {ip} | Latency: {latency}ms", "success")
+                        result.update({
+                            'live': True,
+                            'latency': latency,
+                            'speed': speed,
+                            'ip': ip,
+                            'status': 'alive',
+                            'error': None
+                        })
+                        return result
+                    else:
+                        add_log(f"❌ IPIFY failed: HTTP {response.status_code}", "error")
+                        
+                elif "api.elevenlabs.io" in test_url:
+                    # ElevenLabs chấp nhận 401, 403, 404, 200
+                    if response.status_code in [401, 403, 404, 200]:
+                        add_log(f"✅ ELEVENLABS SUCCESS: {host}:{port} → HTTP {response.status_code} | Latency: {latency}ms", "success")
+                        result.update({
+                            'live': True,
+                            'latency': latency,
+                            'speed': speed,
+                            'ip': f"ElevenLabs HTTP {response.status_code}",
+                            'status': 'alive',
+                            'error': None
+                        })
+                        return result
+                    else:
+                        add_log(f"❌ ElevenLabs failed: HTTP {response.status_code}", "error")
+                        
+                else:  # httpbin
+                    if response.status_code == 200:
+                        try:
+                            ip_data = response.json()
+                            ip = ip_data.get('origin', 'Unknown')
+                            if ',' in ip:
+                                ip = ip.split(',')[0]
+                        except:
+                            ip = "HttpBin Response"
+                        
+                        add_log(f"✅ HTTPBIN SUCCESS: {host}:{port} → IP: {ip} | Latency: {latency}ms", "success")
+                        result.update({
+                            'live': True,
+                            'latency': latency,
+                            'speed': speed,
+                            'ip': ip,
+                            'status': 'alive',
+                            'error': None
+                        })
+                        return result
+                    else:
+                        add_log(f"❌ HttpBin failed: HTTP {response.status_code}", "error")
+                        
+            except requests.exceptions.ProxyError as e:
+                add_log(f"❌ Proxy error with {test_url}: {str(e)}", "error")
+                result['error'] = f"Proxy error: {e}"
+            except requests.exceptions.ConnectTimeout:
+                add_log(f"❌ Connect timeout with {test_url}", "error")
+                result['error'] = "Connect timeout"
+            except requests.exceptions.ReadTimeout:
+                add_log(f"❌ Read timeout with {test_url}", "error")
+                result['error'] = "Read timeout"
+            except requests.exceptions.ConnectionError as e:
+                add_log(f"❌ Connection error with {test_url}: {str(e)}", "error")
+                result['error'] = f"Connection error: {e}"
+            except Exception as e:
+                add_log(f"❌ Unknown error with {test_url}: {str(e)}", "error")
+                result['error'] = f"Error: {e}"
+                
+        # Nếu tất cả test URLs đều fail
+        add_log(f"💀 PROXY DEAD: {host}:{port} - All tests failed", "error")
+        return result
+        
     except Exception as e:
-        pass
-    
-    return None
+        add_log(f"❌ Critical error checking {host}:{port}: {str(e)}", "error")
+        result['error'] = f"Critical error: {e}"
+        return result
 
 def add_log(message, log_type="info"):
     """Add log entry"""
@@ -156,24 +282,26 @@ def fetch_proxies_from_sources():
                     if not line or line.startswith('#'):
                         continue
                         
-                    # Validate proxy format
+                    # Parse proxy giống tool
                     if ':' in line:
-                        try:
-                            # Check if it's valid proxy format
-                            if '@' in line:
-                                # username:password@host:port format
-                                auth_part, host_port = line.split('@')
-                                host, port = host_port.split(':')
-                            else:
-                                # host:port format
-                                host, port = line.split(':')
-                            
-                            # Basic validation
-                            if len(host.split('.')) == 4 and port.isdigit():
-                                source_proxies.append(line)
-                                
-                        except:
-                            continue
+                        # Clean line first
+                        proxy_candidate = line.strip()
+                        
+                        # Remove common prefixes
+                        for prefix in ['http://', 'https://', 'socks4://', 'socks5://']:
+                            if proxy_candidate.startswith(prefix):
+                                proxy_candidate = proxy_candidate[len(prefix):]
+                        
+                        # Use tool's parse logic
+                        parsed = parse_proxy_line(proxy_candidate, "auto")
+                        if parsed:
+                            # Create clean proxy string host:port format
+                            clean_proxy = f"{parsed['host']}:{parsed['port']}"
+                            source_proxies.append(clean_proxy)
+                        else:
+                            # Log first few parse failures for debug
+                            if len(source_proxies) < 3:
+                                add_log(f"❌ Parse failed: '{line[:50]}...'", "error")
                 
                 all_proxies.extend(source_proxies)
                 add_log(f"✅ {source_name}: Tìm thấy {len(source_proxies)} proxy", "success")
@@ -368,6 +496,7 @@ def home():
                 <button class="btn" onclick="debugStatus()" style="background: #ff6b6b;">🔍 Debug Status</button>
                 <button class="btn" onclick="testFetch()" style="background: #4ecdc4;">📥 Test Fetch</button>
                 <button class="btn" onclick="testValidation()" style="background: #ffe66d;">⚡ Test Validation</button>
+                <button class="btn" onclick="quickCheck()" style="background: #ff9ff3;">🚀 Quick Check</button>
             </div>
             
             <div class="logs" id="logs-container" style="display: none;">
@@ -412,6 +541,12 @@ def home():
                 <span class="method get">POST</span>
                 <strong>/api/proxy/test-single</strong>
                 <p>Test validation logic với proxy mẫu</p>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method get">POST</span>
+                <strong>/api/proxy/quick-check</strong>
+                <p>Quick check - parse 20 proxy và validate 5 để test toàn bộ flow</p>
             </div>
             
             <h3>🔗 Proxy Sources:</h3>
@@ -561,6 +696,45 @@ def home():
                         }}
                     }})
                     .catch(e => alert('Validation Test Error: ' + e));
+            }}
+            
+            function quickCheck() {{
+                document.getElementById('service-status').innerHTML = 
+                    '<span class="status-indicator status-active"></span>Quick checking...';
+                
+                fetch('/api/proxy/quick-check', {{method: 'POST'}})
+                    .then(r => r.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            let resultText = '🚀 QUICK CHECK RESULTS:\\n\\n' +
+                                'Source: ' + data.source + '\\n' +
+                                'Total Lines: ' + data.total_lines + '\\n' +
+                                'Parsed Proxies: ' + data.parsed_count + '\\n' +
+                                'Tested: ' + data.tested_count + '\\n' +
+                                'Alive: ' + data.alive_count + '\\n' +
+                                'Conclusion: ' + data.conclusion + '\\n\\n' +
+                                'Validation Results:\\n' +
+                                data.validation_results.map(r => 
+                                    r.proxy + ' = ' + (r.alive ? 'ALIVE (' + r.speed + 's)' : 'DEAD')
+                                ).join('\\n') + '\\n\\n' +
+                                'Sample Parsed Proxies:\\n' +
+                                data.sample_parsed.slice(0, 5).join('\\n');
+                                
+                            alert(resultText);
+                            
+                            if (data.conclusion === 'WORKING') {{
+                                // If working, trigger force refresh
+                                setTimeout(() => {{
+                                    if (confirm('🎉 Proxy parsing WORKS! Do you want to trigger full refresh?')) {{
+                                        forceRefresh();
+                                    }}
+                                }}, 1000);
+                            }}
+                        }} else {{
+                            alert('❌ QUICK CHECK FAILED:\\n' + data.error + '\\n\\nSource: ' + (data.source || 'unknown'));
+                        }}
+                    }})
+                    .catch(e => alert('Quick Check Error: ' + e));
             }}
             
             // Auto-update
@@ -785,18 +959,58 @@ def test_fetch_sources():
             content = response.text
             lines = content.strip().split('\n')
             
+            # Use NEW relaxed validation logic
             valid_proxies = []
-            for line in lines[:10]:  # Only check first 10 lines
+            parse_errors = []
+            
+            for i, line in enumerate(lines[:20]):  # Check first 20 lines
                 line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                    
                 if ':' in line:
                     try:
-                        host, port = line.split(':')
-                        if len(host.split('.')) == 4 and port.isdigit():
-                            valid_proxies.append(line)
-                    except:
+                        # Use same logic as in fetch_proxies_from_sources
+                        proxy_candidate = line.strip()
+                        
+                        # Remove common prefixes
+                        for prefix in ['http://', 'https://', 'socks4://', 'socks5://']:
+                            if proxy_candidate.startswith(prefix):
+                                proxy_candidate = proxy_candidate[len(prefix):]
+                        
+                        # Parse proxy format
+                        if '@' in proxy_candidate:
+                            auth_part, host_port = proxy_candidate.split('@', 1)
+                            if ':' in host_port:
+                                host, port = host_port.split(':', 1)
+                            else:
+                                parse_errors.append(f"Line {i}: No port in auth format")
+                                continue
+                        else:
+                            parts = proxy_candidate.split(':')
+                            if len(parts) >= 2:
+                                host, port = parts[0], parts[1]
+                            else:
+                                parse_errors.append(f"Line {i}: Not enough parts")
+                                continue
+                        
+                        # Relaxed validation
+                        if (host and port and 
+                            port.isdigit() and 
+                            1 <= int(port) <= 65535 and
+                            '.' in host and 
+                            len(host) > 7):
+                            
+                            clean_proxy = f"{host.strip()}:{port.strip()}"
+                            valid_proxies.append(clean_proxy)
+                        else:
+                            parse_errors.append(f"Line {i}: Validation failed - host='{host}', port='{port}'")
+                            
+                    except Exception as e:
+                        parse_errors.append(f"Line {i}: Exception - {str(e)}")
                         continue
             
-            add_log(f"✅ {source_name}: Tìm thấy {len(valid_proxies)} proxy valid từ {len(lines)} dòng", "success")
+            add_log(f"✅ {source_name}: Tìm thấy {len(valid_proxies)} proxy valid từ {len(lines)} dòng (NEW logic)", "success")
             
             return jsonify({
                 'success': True,
@@ -806,7 +1020,9 @@ def test_fetch_sources():
                 'total_lines': len(lines),
                 'valid_proxies_found': len(valid_proxies),
                 'sample_proxies': valid_proxies[:5],
-                'raw_sample': lines[:5]
+                'raw_sample': lines[:10],
+                'parse_errors': parse_errors[:5],  # First 5 errors for debug
+                'validation_method': 'NEW_RELAXED'
             })
         else:
             add_log(f"❌ {source_name}: HTTP {response.status_code}", "error")
@@ -819,6 +1035,128 @@ def test_fetch_sources():
         
     except Exception as e:
         add_log(f"❌ Error test-fetch: {str(e)}", "error")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/proxy/quick-check', methods=['POST'])
+def quick_check():
+    """API quick check - fetch và validate 20 proxy nhanh"""
+    try:
+        add_log("🚀 QUICK CHECK bắt đầu...", "info")
+        
+        # Fetch từ source đầu tiên
+        source_name = list(PROXY_SOURCE_LINKS.keys())[0]
+        source_url = PROXY_SOURCE_LINKS[source_name]
+        
+        response = requests.get(source_url, timeout=15)
+        
+        if response.status_code != 200:
+            return jsonify({
+                'success': False,
+                'error': f'HTTP {response.status_code} from {source_name}'
+            })
+        
+        # Parse với TOOL LOGIC
+        content = response.text
+        lines = content.strip().split('\n')
+        parsed_proxies = []
+        parse_stats = {'total_lines': 0, 'valid_format': 0, 'auto_detected': {}}
+        
+        add_log(f"📝 Parsing {len(lines)} lines from {source_name}...", "info")
+        
+        for line in lines[:100]:  # First 100 lines
+            line = line.strip()
+            parse_stats['total_lines'] += 1
+            
+            if not line or line.startswith('#'):
+                continue
+                
+            if ':' in line:
+                # Clean prefixes
+                proxy_candidate = line.strip()
+                for prefix in ['http://', 'https://', 'socks4://', 'socks5://']:
+                    if proxy_candidate.startswith(prefix):
+                        proxy_candidate = proxy_candidate[len(prefix):]
+                
+                # Use tool's parse logic
+                parsed = parse_proxy_line(proxy_candidate, "auto")
+                if parsed:
+                    clean_proxy = f"{parsed['host']}:{parsed['port']}"
+                    parsed_proxies.append(clean_proxy)
+                    parse_stats['valid_format'] += 1
+                    
+                    # Track auto-detected protocols
+                    protocol = parsed['type']
+                    parse_stats['auto_detected'][protocol] = parse_stats['auto_detected'].get(protocol, 0) + 1
+                    
+                    if len(parsed_proxies) >= 20:  # Stop at 20
+                        break
+        
+        protocol_summary = ", ".join([f"{k}: {v}" for k, v in parse_stats['auto_detected'].items()])
+        add_log(f"🎯 Parsed {len(parsed_proxies)} proxy từ {source_name} | Protocols: {protocol_summary}", "success")
+        
+        if not parsed_proxies:
+            return jsonify({
+                'success': False,
+                'error': 'Không parse được proxy nào',
+                'source': source_name,
+                'total_lines': len(lines),
+                'parse_stats': parse_stats
+            })
+        
+        # Test validate 5 proxy đầu tiên giống tool
+        test_proxies = parsed_proxies[:5]
+        validated_results = []
+        
+        add_log(f"🧪 Testing {len(test_proxies)} proxies from {source_name}...", "info")
+        
+        for i, proxy in enumerate(test_proxies):
+            add_log(f"🔍 Testing {i+1}/{len(test_proxies)}: {proxy}", "info")
+            
+            result = check_single_proxy(proxy, timeout=6)
+            if result and result['status'] == 'alive':
+                validated_results.append({
+                    'proxy': proxy,
+                    'alive': True,
+                    'speed': result['speed'],
+                    'latency': result['latency'],
+                    'ip': result['ip'],
+                    'type': result['type']
+                })
+                add_log(f"✅ ALIVE: {proxy} → {result['ip']} | {result['latency']}ms", "success")
+            else:
+                error_msg = result.get('error', 'Unknown error') if result else 'Parse failed'
+                validated_results.append({
+                    'proxy': proxy,
+                    'alive': False,
+                    'speed': None,
+                    'error': error_msg
+                })
+                add_log(f"💀 DEAD: {proxy} → {error_msg}", "error")
+        
+        alive_count = sum(1 for r in validated_results if r['alive'])
+        success_rate = (alive_count/len(test_proxies)*100) if test_proxies else 0
+        add_log(f"📊 Quick check complete: {alive_count}/{len(test_proxies)} alive ({success_rate:.1f}%)", "info")
+        
+        return jsonify({
+            'success': True,
+            'source': source_name,
+            'total_lines': len(lines),
+            'parsed_count': len(parsed_proxies),
+            'tested_count': len(test_proxies),
+            'alive_count': alive_count,
+            'sample_parsed': parsed_proxies[:10],
+            'validation_results': validated_results,
+            'parse_stats': parse_stats,
+            'parse_ratio': f"{len(parsed_proxies)}/{len(lines)} ({len(parsed_proxies)/len(lines)*100:.1f}%)",
+            'alive_ratio': f"{alive_count}/{len(test_proxies)} ({success_rate:.1f}%)",
+            'conclusion': 'WORKING' if alive_count > 0 else 'NEED_INVESTIGATION'
+        })
+        
+    except Exception as e:
+        add_log(f"❌ Quick check error: {str(e)}", "error")
         return jsonify({
             'success': False,
             'error': str(e)
