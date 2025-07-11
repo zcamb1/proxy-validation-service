@@ -32,23 +32,54 @@ proxy_cache = {
     "sources_processed": 0
 }
 
-# Nguồn proxy được phân loại - tối ưu cho Render free plan
+# Nguồn proxy được phân loại với protocol rõ ràng - tối ưu cho Render free plan
 PROXY_SOURCE_LINKS = {
-    # Categorized sources - test với protocol đã biết
+    # Categorized sources - mỗi nguồn có protocol cụ thể
     "categorized": {
-        "Server Alpha": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/all/data.txt",
-        "Network Beta": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", 
-        "Gateway Pro": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-        "Server Delta": "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
-        "Server Echo": "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&format=textplain",
-        "Server Foxtrot": "https://www.proxy-list.download/api/v1/get?type=http",
-        "Server Golf": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+        "Server Alpha": {
+            "http": "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/http.txt",
+            "https": "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/https.txt", 
+            "socks5": "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/socks5.txt",
+        },
+        "Network Beta": {
+            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+            "protocol": "http"
+        },
+        "Gateway Pro": {
+            "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", 
+            "protocol": "http"
+        },
+        "Server Delta": {
+            "url": "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
+            "protocol": "socks5"
+        },
+        "Server Echo": {
+            "url": "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&format=textplain",
+            "protocol": "http"
+        },
+        "Server Foxtrot": {
+            "url": "https://www.proxy-list.download/api/v1/get?type=http",
+            "protocol": "http"
+        },
+        "Server Golf": {
+            "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+            "protocol": "http"
+        },
     },
-    # Mixed sources - test với tất cả protocols
+    # Mixed sources - test với tất cả protocols (http, https, socks4, socks5)
     "mixed": {
-        "hendrikbgr": "https://raw.githubusercontent.com/hendrikbgr/Free-Proxy-Repo/master/proxy_list.txt",
-        "MrMarble": "https://raw.githubusercontent.com/MrMarble/proxy-list/main/all.txt",
-        "sunny9577": "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt"
+        "hendrikbgr": {
+            "url": "https://raw.githubusercontent.com/hendrikbgr/Free-Proxy-Repo/master/proxy_list.txt",
+            "protocols": ["http", "https", "socks4", "socks5"]
+        },
+        "MrMarble": {
+            "url": "https://raw.githubusercontent.com/MrMarble/proxy-list/main/all.txt",
+            "protocols": ["http", "https", "socks4", "socks5"]
+        },
+        "sunny9577": {
+            "url": "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt",
+            "protocols": ["http", "https", "socks4", "socks5"]
+        }
     }
 }
 
@@ -241,7 +272,8 @@ def check_single_proxy(proxy_string, timeout=6, protocols=['http']):
 
 def fetch_proxies_from_sources():
     """Lấy proxy từ tất cả nguồn với logic thông minh - tối ưu cho Render"""
-    all_proxies = []
+    categorized_proxies = []
+    mixed_proxies = []
     sources_processed = 0
     
     log_to_render("🔍 BẮT ĐẦU FETCH PROXY TỪ CÁC NGUỒN...")
@@ -249,44 +281,60 @@ def fetch_proxies_from_sources():
     
     # Xử lý categorized sources trước (ưu tiên)
     log_to_render("📥 Xử lý CATEGORIZED sources...")
-    for source_name, source_url in PROXY_SOURCE_LINKS["categorized"].items():
+    for source_name, source_config in PROXY_SOURCE_LINKS["categorized"].items():
         try:
-            log_to_render(f"📡 Fetching {source_name}...")
-            
-            response = requests.get(source_url, timeout=30)
-            
-            if response.status_code == 200:
-                content = response.text
-                lines = content.strip().split('\n')
-                source_proxies = []
-                
-                for line in lines:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                        
-                    # Validate proxy format
-                    if ':' in line:
-                        try:
-                            # Check if it's valid proxy format
-                            if '@' in line:
-                                auth_part, host_port = line.split('@')
-                                host, port = host_port.split(':')
-                            else:
-                                host, port = line.split(':')
-                            
-                            # Basic validation
-                            if len(host.split('.')) == 4 and port.isdigit():
-                                source_proxies.append(line)
-                                
-                        except:
-                            continue
-                
-                all_proxies.extend(source_proxies)
-                sources_processed += 1
-                log_to_render(f"✅ {source_name}: {len(source_proxies)} proxy")
+            # Check if source has multiple protocols (Server Alpha style) or single protocol
+            if "url" in source_config and "protocol" in source_config:
+                # Single protocol format
+                source_url = source_config["url"]
+                source_protocol = source_config["protocol"]
+                protocols_to_fetch = [(source_protocol, source_url)]
             else:
-                log_to_render(f"❌ {source_name}: HTTP {response.status_code}")
+                # Multiple protocols format (Server Alpha style)
+                protocols_to_fetch = [(protocol, url) for protocol, url in source_config.items()]
+            
+            source_total_proxies = []
+            
+            for source_protocol, source_url in protocols_to_fetch:
+                log_to_render(f"📡 Fetching {source_name} - {source_protocol}...")
+                
+                response = requests.get(source_url, timeout=30)
+                
+                if response.status_code == 200:
+                    content = response.text
+                    lines = content.strip().split('\n')
+                    source_proxies = []
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                            
+                        # Validate proxy format
+                        if ':' in line:
+                            try:
+                                # Check if it's valid proxy format
+                                if '@' in line:
+                                    auth_part, host_port = line.split('@')
+                                    host, port = host_port.split(':')
+                                else:
+                                    host, port = line.split(':')
+                                
+                                # Basic validation
+                                if len(host.split('.')) == 4 and port.isdigit():
+                                    source_proxies.append(('categorized', line, source_protocol))
+                                    
+                            except:
+                                continue
+                    
+                    source_total_proxies.extend(source_proxies)
+                    log_to_render(f"✅ {source_name} - {source_protocol}: {len(source_proxies)} proxy")
+                else:
+                    log_to_render(f"❌ {source_name} - {source_protocol}: HTTP {response.status_code}")
+            
+            categorized_proxies.extend(source_total_proxies)
+            sources_processed += 1
+            log_to_render(f"🎯 {source_name} TOTAL: {len(source_total_proxies)} proxy from {len(protocols_to_fetch)} protocols")
         
         except Exception as e:
             log_to_render(f"❌ {source_name}: {str(e)}")
@@ -294,9 +342,11 @@ def fetch_proxies_from_sources():
     
     # Xử lý mixed sources sau
     log_to_render("📥 Xử lý MIXED sources...")
-    for source_name, source_url in PROXY_SOURCE_LINKS["mixed"].items():
+    for source_name, source_config in PROXY_SOURCE_LINKS["mixed"].items():
         try:
-            log_to_render(f"📡 Fetching {source_name}...")
+            source_url = source_config["url"]
+            source_protocols = source_config["protocols"]
+            log_to_render(f"📡 Fetching {source_name} (protocols: {', '.join(source_protocols)})...")
             
             response = requests.get(source_url, timeout=30)
             
@@ -322,14 +372,14 @@ def fetch_proxies_from_sources():
                             
                             # Basic validation  
                             if len(host.split('.')) == 4 and port.isdigit():
-                                source_proxies.append(line)
+                                source_proxies.append(('mixed', line, source_protocols))
                                 
                         except:
                             continue
                 
-                all_proxies.extend(source_proxies)
+                mixed_proxies.extend(source_proxies)
                 sources_processed += 1
-                log_to_render(f"✅ {source_name}: {len(source_proxies)} proxy")
+                log_to_render(f"✅ {source_name} ({', '.join(source_protocols)}): {len(source_proxies)} proxy")
             else:
                 log_to_render(f"❌ {source_name}: HTTP {response.status_code}")
         
@@ -337,12 +387,14 @@ def fetch_proxies_from_sources():
             log_to_render(f"❌ {source_name}: {str(e)}")
             continue
     
-    # Shuffle để tránh bias và giới hạn cho Render free plan
+    # Combine và shuffle
+    all_proxies = categorized_proxies + mixed_proxies
     random.shuffle(all_proxies)
     limited_proxies = all_proxies[:800]  # Giới hạn 800 proxy để không quá tải
     
     log_to_render(f"🎯 HOÀN THÀNH FETCH: {len(all_proxies)} total → {len(limited_proxies)} selected")
     log_to_render(f"📊 Đã xử lý {sources_processed} nguồn thành công")
+    log_to_render(f"📋 Categorized: {len(categorized_proxies)}, Mixed: {len(mixed_proxies)}")
     
     return limited_proxies, sources_processed
 
@@ -364,7 +416,12 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
         chunk_end = min(chunk_start + chunk_size, total_proxies)
         chunk = proxy_list[chunk_start:chunk_end]
         
+        # Count proxy types in chunk
+        categorized_count = sum(1 for item in chunk if isinstance(item, tuple) and item[0] == 'categorized')
+        mixed_count = sum(1 for item in chunk if isinstance(item, tuple) and item[0] == 'mixed')
+        
         log_to_render(f"📦 Chunk {chunk_start//chunk_size + 1}: Validate {len(chunk)} proxy (từ {chunk_start+1} đến {chunk_end})")
+        log_to_render(f"🔧 Chunk protocols: {categorized_count} categorized(specific) + {mixed_count} mixed(all)")
         
         chunk_alive = []
         checked_count = 0
@@ -373,29 +430,51 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit tất cả proxy trong chunk
             future_to_proxy = {}
-            for proxy in chunk:
-                # Xác định protocols để test
-                if any(source in PROXY_SOURCE_LINKS["mixed"] for source in PROXY_SOURCE_LINKS["mixed"]):
-                    protocols = ['http', 'https', 'socks4', 'socks5']  # Mixed sources test tất cả
+            for proxy_data in chunk:
+                # Unpack proxy data với structure mới
+                if isinstance(proxy_data, tuple) and len(proxy_data) == 3:
+                    proxy_type, proxy_string, protocols_info = proxy_data
                 else:
-                    protocols = ['http']  # Categorized sources chỉ test http
+                    # Fallback for old format
+                    proxy_type, proxy_string, protocols_info = 'categorized', proxy_data, 'http'
                 
-                future = executor.submit(check_single_proxy, proxy, 6, protocols)
-                future_to_proxy[future] = proxy
+                # Xác định protocols để test dựa trên source type
+                if proxy_type == 'mixed':
+                    protocols = protocols_info  # Mixed sources sử dụng protocols từ config
+                else:
+                    protocols = [protocols_info]  # Categorized sources sử dụng protocol cụ thể
+                
+                future = executor.submit(check_single_proxy, proxy_string, 6, protocols)
+                future_to_proxy[future] = (proxy_type, proxy_string, protocols_info)
             
             # Collect results với progress tracking
             for future in as_completed(future_to_proxy):
                 checked_count += 1
-                proxy = future_to_proxy[future]
+                proxy_type, proxy_string, protocols_info = future_to_proxy[future]
                 
                 try:
                     result = future.result()
                     if result:
                         chunk_alive.append(result)
-                        log_to_render(f"✅ SỐNG: {result['host']}:{result['port']} ({result['speed']}s) [{checked_count}/{len(chunk)}]")
+                        # Update cache real-time - add only this result
+                        alive_proxies.append(result)
+                        proxy_cache["http"] = alive_proxies
+                        proxy_cache["alive_count"] = len(alive_proxies)
+                        proxy_cache["last_update"] = datetime.now().isoformat()
+                        
+                        # Format protocols info for display
+                        if proxy_type == 'mixed':
+                            protocols_display = f"mixed|{result['type']}"
+                        else:
+                            protocols_display = f"{protocols_info}|{result['type']}"
+                            
+                        log_to_render(f"✅ SỐNG ({protocols_display}): {result['host']}:{result['port']} ({result['speed']}s) [{checked_count}/{len(chunk)}]")
                     else:
                         if checked_count % 50 == 0:  # Log mỗi 50 proxy để không spam
                             log_to_render(f"⏳ Progress: {checked_count}/{len(chunk)} checked, {len(chunk_alive)} alive")
+                    
+                    # Update total checked real-time
+                    proxy_cache["total_checked"] = chunk_start + checked_count
                             
                 except Exception as e:
                     if checked_count % 100 == 0:  # Log errors occasionally
