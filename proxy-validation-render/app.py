@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
+import sys
+import traceback
 
 app = Flask(__name__)
 
@@ -44,7 +46,6 @@ def log_to_render(message, level="INFO"):
     timestamp = datetime.now().strftime("%H:%M:%S")
     log_msg = f"[{level}] {timestamp} | {message}"
     print(log_msg)
-    import sys
     sys.stdout.flush()  # Force flush để logs hiện ngay trong Render
 
 def check_single_proxy(proxy_string, timeout=6, protocols=['http']):
@@ -224,7 +225,7 @@ def fetch_proxies_from_sources():
                             else:
                                 host, port = line.split(':')
                             
-                            # Basic validation
+                            # Basic validation  
                             if len(host.split('.')) == 4 and port.isdigit():
                                 source_proxies.append(line)
                                 
@@ -241,211 +242,320 @@ def fetch_proxies_from_sources():
             log_to_render(f"❌ {source_name}: {str(e)}")
             continue
     
-    # Remove duplicates
-    unique_proxies = list(set(all_proxies))
-    log_to_render(f"🎯 TỔNG: {len(unique_proxies)} proxy từ {sources_processed} nguồn")
+    # Shuffle để tránh bias và giới hạn cho Render free plan
+    random.shuffle(all_proxies)
+    limited_proxies = all_proxies[:800]  # Giới hạn 800 proxy để không quá tải
     
-    return unique_proxies, sources_processed
+    log_to_render(f"🎯 HOÀN THÀNH FETCH: {len(all_proxies)} total → {len(limited_proxies)} selected")
+    log_to_render(f"📊 Đã xử lý {sources_processed} nguồn thành công")
+    
+    return limited_proxies, sources_processed
 
 def validate_proxy_batch_smart(proxy_list, max_workers=15):
-    """Validate proxy với CHUNK processing cho Render free plan"""
+    """Validate proxies theo batch với real-time logging - tối ưu cho Render"""
+    if not proxy_list:
+        log_to_render("⚠️ Không có proxy để validate")
+        return []
+    
     alive_proxies = []
+    chunk_size = 300  # Process theo chunks
+    total_proxies = len(proxy_list)
     
-    log_to_render(f"⚡ VALIDATION BẮT ĐẦU với {len(proxy_list)} proxy input")
+    log_to_render(f"⚡ BẮT ĐẦU VALIDATE {total_proxies} PROXY")
+    log_to_render(f"🔧 Cấu hình: {max_workers} workers, chunks={chunk_size}")
     
-    # GIỚI HẠN cho Render free plan (512MB RAM)
-    CHUNK_SIZE = 300  # Xử lý 300 proxy mỗi lần
-    MAX_TOTAL = 800   # Tối đa 800 proxy total
-    
-    # Limit total proxies để tránh timeout trên Render free
-    limited_proxies = proxy_list[:MAX_TOTAL]
-    
-    log_to_render(f"🔄 RENDER FREE MODE: Xử lý {len(limited_proxies)} proxy (max {MAX_TOTAL})")
-    log_to_render(f"📦 Chia chunks: {CHUNK_SIZE} proxy/chunk với {max_workers} workers")
-    log_to_render(f"🎯 Expected chunks: {(len(limited_proxies) + CHUNK_SIZE - 1) // CHUNK_SIZE}")
-    
-    # Chia thành chunks nhỏ
-    for i in range(0, len(limited_proxies), CHUNK_SIZE):
-        chunk = limited_proxies[i:i+CHUNK_SIZE]
-        chunk_num = (i // CHUNK_SIZE) + 1
-        total_chunks = (len(limited_proxies) + CHUNK_SIZE - 1) // CHUNK_SIZE
+    # Process theo chunks để tránh overload
+    for chunk_start in range(0, total_proxies, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, total_proxies)
+        chunk = proxy_list[chunk_start:chunk_end]
         
-        log_to_render(f"🧩 Chunk {chunk_num}/{total_chunks}: {len(chunk)} proxy")
+        log_to_render(f"📦 Chunk {chunk_start//chunk_size + 1}: Validate {len(chunk)} proxy (từ {chunk_start+1} đến {chunk_end})")
         
+        chunk_alive = []
+        checked_count = 0
+        
+        # Validate chunk với ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit chunk proxy checks
-            futures = []
+            # Submit tất cả proxy trong chunk
+            future_to_proxy = {}
             for proxy in chunk:
-                future = executor.submit(check_single_proxy, proxy, 6, ['http'])  # Reduced timeout to 6s
-                futures.append(future)
+                # Xác định protocols để test
+                if any(source in PROXY_SOURCE_LINKS["mixed"] for source in PROXY_SOURCE_LINKS["mixed"]):
+                    protocols = ['http', 'https', 'socks4', 'socks5']  # Mixed sources test tất cả
+                else:
+                    protocols = ['http']  # Categorized sources chỉ test http
+                
+                future = executor.submit(check_single_proxy, proxy, 6, protocols)
+                future_to_proxy[future] = proxy
             
-            completed = 0
-            for future in as_completed(futures):
-                result = future.result()
-                completed += 1
+            # Collect results với progress tracking
+            for future in as_completed(future_to_proxy):
+                checked_count += 1
+                proxy = future_to_proxy[future]
                 
-                if result:
-                    alive_proxies.append(result)
-                    log_to_render(f"✅ ALIVE: {result['proxy_string']} | {result['speed']}s")
-                
-                # Progress trong chunk
-                if completed % 100 == 0:
-                    log_to_render(f"📊 Chunk {chunk_num}: {completed}/{len(chunk)} | Total alive: {len(alive_proxies)}")
+                try:
+                    result = future.result()
+                    if result:
+                        chunk_alive.append(result)
+                        log_to_render(f"✅ SỐNG: {result['host']}:{result['port']} ({result['speed']}s) [{checked_count}/{len(chunk)}]")
+                    else:
+                        if checked_count % 50 == 0:  # Log mỗi 50 proxy để không spam
+                            log_to_render(f"⏳ Progress: {checked_count}/{len(chunk)} checked, {len(chunk_alive)} alive")
+                            
+                except Exception as e:
+                    if checked_count % 100 == 0:  # Log errors occasionally
+                        log_to_render(f"❌ Error checking proxy: {str(e)}")
         
-        log_to_render(f"✅ Chunk {chunk_num} hoàn thành: {len(alive_proxies)} alive total")
+        alive_proxies.extend(chunk_alive)
+        chunk_success_rate = round(len(chunk_alive)/len(chunk)*100, 1) if chunk else 0
         
-        # Sleep giữa chunks để giảm load
-        if i + CHUNK_SIZE < len(limited_proxies):
-            log_to_render("😴 Nghỉ 2s giữa chunks...")
+        log_to_render(f"📊 Chunk {chunk_start//chunk_size + 1} hoàn thành: {len(chunk_alive)} alive / {len(chunk)} total ({chunk_success_rate}%)")
+        
+        # Sleep giữa các chunks để CPU nghỉ
+        if chunk_end < total_proxies:
+            log_to_render("😴 Sleep 2s giữa chunks...")
             time.sleep(2)
     
-    log_to_render(f"🎉 VALIDATION HOÀN THÀNH: {len(alive_proxies)} alive từ {len(limited_proxies)} processed")
+    success_rate = round(len(alive_proxies)/total_proxies*100, 1) if total_proxies > 0 else 0
+    log_to_render(f"🎯 VALIDATION HOÀN THÀNH!")
+    log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {total_proxies} total ({success_rate}%)")
+    
     return alive_proxies
 
 def background_proxy_refresh():
-    """Background task chạy mỗi 10 phút - tối ưu cho Render free plan"""
-    log_to_render("🚀 BACKGROUND THREAD ĐÃ KHỞI ĐỘNG!")
+    """Background thread để refresh proxy cache định kỳ - tối ưu cho Render"""
+    log_to_render("🔄 BACKGROUND THREAD KHỞI ĐỘNG")
     
     while True:
         try:
-            log_to_render("🔄 BẮT ĐẦU CHU KỲ REFRESH TỰ ĐỘNG (10 phút)")
-            log_to_render(f"📊 Cache hiện tại: {len(proxy_cache.get('http', []))} proxy sống")
+            log_to_render("=" * 50)
+            log_to_render("🔄 BẮT ĐẦU CHU KỲ REFRESH MỚI")
+            log_to_render("=" * 50)
             
-            # Fetch proxies from sources
-            log_to_render("🌐 Bắt đầu fetch proxy từ các nguồn...")
-            raw_proxies, sources_count = fetch_proxies_from_sources()
+            start_time = time.time()
             
-            if raw_proxies:
-                log_to_render(f"🎯 Lấy được {len(raw_proxies)} proxy từ {sources_count} nguồn")
+            # Fetch proxies từ sources
+            log_to_render("📥 Fetching proxies từ tất cả nguồn...")
+            proxy_list, sources_count = fetch_proxies_from_sources()
+            
+            if proxy_list:
+                log_to_render(f"📊 Fetch thành công: {len(proxy_list)} proxy từ {sources_count} nguồn")
                 
-                # Validate với chunk processing cho Render free 
-                log_to_render("⚡ Bắt đầu validation proxy...")
-                alive_proxies = validate_proxy_batch_smart(raw_proxies)
+                # Validate proxies
+                log_to_render("⚡ Bắt đầu validation...")
+                alive_proxies = validate_proxy_batch_smart(proxy_list)
                 
-                # Update cache
+                # Cập nhật cache
                 proxy_cache["http"] = alive_proxies
                 proxy_cache["last_update"] = datetime.now().isoformat()
-                proxy_cache["total_checked"] = min(len(raw_proxies), 800)  # Actual processed
+                proxy_cache["total_checked"] = len(proxy_list)
                 proxy_cache["alive_count"] = len(alive_proxies)
                 proxy_cache["sources_processed"] = sources_count
                 
-                success_rate = round(len(alive_proxies)/proxy_cache["total_checked"]*100, 1) if proxy_cache["total_checked"] > 0 else 0
-                log_to_render(f"✅ KẾT QUẢ CUỐI: {len(alive_proxies)} PROXY SỐNG")
-                log_to_render(f"📊 TỶ LỆ THÀNH CÔNG: {success_rate}% | {proxy_cache['total_checked']}/{len(raw_proxies)}")
-                log_to_render(f"💾 Đã cập nhật cache - Service sẵn sàng phục vụ!")
+                cycle_time = round(time.time() - start_time, 1)
+                success_rate = round(len(alive_proxies)/len(proxy_list)*100, 1) if proxy_list else 0
+                
+                log_to_render("=" * 50)
+                log_to_render("✅ CHU KỲ REFRESH HOÀN THÀNH!")
+                log_to_render(f"⏱️ Thời gian: {cycle_time}s")
+                log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {len(proxy_list)} total")
+                log_to_render(f"📈 Tỷ lệ thành công: {success_rate}%")
+                log_to_render(f"🔄 Tiếp theo trong 10 phút...")
+                log_to_render("=" * 50)
+                
             else:
-                log_to_render("❌ THẤT BẠI: Không fetch được proxy từ nguồn nào")
-                log_to_render("🔍 Sẽ thử lại trong chu kỳ tiếp theo...")
-            
-            # Sleep for 10 minutes
-            log_to_render("😴 NGHỈ 10 PHÚT trước chu kỳ tiếp theo...")
-            for i in range(10):
-                time.sleep(60)  # Sleep 1 minute at a time
-                if i % 2 == 0:  # Log every 2 minutes
-                    log_to_render(f"⏰ Còn {10-i-1} phút nữa đến chu kỳ tiếp theo...")
+                log_to_render("❌ THẤT BẠI: Không fetch được proxy nào")
+                log_to_render("🔄 Thử lại trong 10 phút...")
             
         except Exception as e:
-            log_to_render(f"❌ LỖI NGHIÊM TRỌNG TRONG BACKGROUND: {str(e)}")
-            log_to_render(f"🔧 Chi tiết lỗi: {type(e).__name__}")
-            import traceback
+            log_to_render(f"❌ LỖI BACKGROUND REFRESH: {str(e)}")
             log_to_render(f"📍 Traceback: {traceback.format_exc()}")
-            # Sleep 3 minutes on error
-            log_to_render("⏰ Nghỉ 3 phút rồi thử lại...")
-            time.sleep(3 * 60)
+            log_to_render("🔄 Tiếp tục vòng lặp...")
+        
+        # Sleep 10 phút trước chu kỳ tiếp theo
+        log_to_render("😴 Sleep 10 phút trước chu kỳ tiếp theo...")
+        time.sleep(600)  # 10 minutes
 
-# API Routes
 @app.route('/')
 def home():
-    """Homepage AUTO UPDATE - không có nút test/debug"""
-    # Count total sources
-    total_sources = len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"])
-    
+    """UI chính với auto-refresh"""
     html = f"""
     <!DOCTYPE html>
-    <html>
+    <html lang="vi">
     <head>
-        <title>🚀 AUTO PROXY SERVICE</title>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Proxy Validation Service</title>
         <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
-            .container {{ max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-            .stats {{ background: #e8f5e8; padding: 20px; border-radius: 8px; margin: 20px 0; border: 2px solid #4caf50; }}
-            .live-count {{ font-size: 32px; color: #2e7d32; font-weight: bold; text-align: center; }}
-            .success-rate {{ font-size: 18px; color: #ff6600; font-weight: bold; text-align: center; margin: 10px 0; }}
-            .auto-status {{ background: #1976d2; color: white; padding: 15px; border-radius: 8px; text-align: center; margin: 15px 0; }}
-            .endpoint {{ background: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #007bff; }}
-            .method {{ color: #fff; padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
-            .get {{ background: #28a745; }}
-            .source-category {{ background: #f0f0f0; padding: 15px; border-radius: 8px; margin: 10px 0; }}
-            .status {{ padding: 10px; margin: 10px 0; border-radius: 5px; }}
-            .status-info {{ background: #e3f2fd; }}
-            .status-success {{ background: #e8f5e8; }}
-            .status-error {{ background: #ffebee; }}
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                color: white;
+            }}
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 30px;
+                box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+                border: 1px solid rgba(255, 255, 255, 0.18);
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+            }}
+            .header h1 {{
+                margin: 0;
+                font-size: 2.5em;
+                background: linear-gradient(45deg, #fff, #f0f0f0);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            }}
+            .status {{
+                text-align: center;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 20px 0;
+                font-weight: bold;
+                font-size: 1.2em;
+            }}
+            .status-success {{
+                background: rgba(76, 175, 80, 0.3);
+                border: 2px solid #4CAF50;
+            }}
+            .status-info {{
+                background: rgba(33, 150, 243, 0.3);
+                border: 2px solid #2196F3;
+            }}
+            .status-error {{
+                background: rgba(244, 67, 54, 0.3);
+                border: 2px solid #f44336;
+            }}
+            .grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+                margin-top: 30px;
+            }}
+            .card {{
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 15px;
+                padding: 20px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }}
+            .card h3 {{
+                margin-top: 0;
+                color: #fff;
+                border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+                padding-bottom: 10px;
+            }}
+            .api-section {{
+                margin-top: 30px;
+                padding: 20px;
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 15px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }}
+            .api-endpoint {{
+                background: rgba(255, 255, 255, 0.1);
+                padding: 10px;
+                border-radius: 8px;
+                margin: 10px 0;
+                font-family: 'Courier New', monospace;
+                border-left: 4px solid #4CAF50;
+            }}
+            .update-time {{
+                font-size: 0.9em;
+                opacity: 0.8;
+                text-align: center;
+                margin-top: 20px;
+            }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 AUTO PROXY VALIDATION SERVICE</h1>
-            
-            <div class="auto-status">
-                <h3>🔄 RENDER FREE PLAN - TỰ ĐỘNG</h3>
-                <p>Service TỰ ĐỘNG xử lý proxy mỗi 10 phút từ {total_sources} nguồn</p>
-                <p>✅ Timeout: 6s | Workers: 15 | Max: 800 proxy/cycle | Chunks: 300/batch</p>
-                <p>🚀 Tối ưu cho Render free plan (512MB RAM)</p>
+            <div class="header">
+                <h1>🚀 Proxy Validation Service</h1>
+                <p>Tự động tìm và validate proxy từ nhiều nguồn - Tối ưu cho Render Free Plan</p>
             </div>
             
-            <div class="stats">
-                <h3>📊 KẾT QUẢ LIVE:</h3>
-                <div id="stats">Loading...</div>
+            <div id="system-status" class="status status-error">
+                <div id="current-status">Đang khởi động service...</div>
             </div>
             
-            <div id="system-status" class="status status-info">
-                <strong>Trạng thái:</strong> <span id="current-status">Đang kiểm tra...</span>
+            <div class="grid">
+                <div class="card">
+                    <h3>📊 Thống Kê Proxy</h3>
+                    <div id="stats">
+                        <p>Đang tải...</p>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h3>⚙️ Cấu Hình Hệ Thống</h3>
+                    <div id="config">
+                        <p><strong>Render Plan:</strong> Free (512MB RAM)</p>
+                        <p><strong>Timeout:</strong> 6 giây</p>
+                        <p><strong>Workers:</strong> 15 threads</p>
+                        <p><strong>Chunk Size:</strong> 300 proxy/batch</p>
+                        <p><strong>Max Total:</strong> 800 proxy/cycle</p>
+                        <p><strong>Refresh:</strong> Mỗi 10 phút</p>
+                        <p><strong>Processing:</strong> Chunk mode với sleep</p>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h3>🌐 Nguồn Proxy</h3>
+                    <div id="sources">
+                        <p><strong>Categorized Sources:</strong> {len(PROXY_SOURCE_LINKS["categorized"])}</p>
+                        <p><strong>Mixed Sources:</strong> {len(PROXY_SOURCE_LINKS["mixed"])}</p>
+                        <p><strong>Tổng:</strong> {len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"])} nguồn</p>
+                        <p><strong>Logic:</strong> Categorized trước, Mixed sau</p>
+                    </div>
+                </div>
             </div>
             
-            <h2>📡 API Endpoints:</h2>
-            
-            <div class="endpoint">
-                <span class="method get">GET</span>
-                <strong>/api/proxy/alive</strong>
-                <p>Lấy danh sách proxy sống từ cache tự động</p>
-                <p>Params: <code>count</code> (số lượng, default: 50)</p>
+            <div class="api-section">
+                <h3>🔗 API Endpoints</h3>
+                <div class="api-endpoint">
+                    <strong>GET /api/proxy/alive?count=50</strong><br>
+                    Lấy danh sách proxy sống (mặc định 50)
+                </div>
+                <div class="api-endpoint">
+                    <strong>GET /api/proxy/stats</strong><br>
+                    Thống kê chi tiết về proxy và service
+                </div>
+                <div class="api-endpoint">
+                    <strong>GET /api/health</strong><br>
+                    Health check service
+                </div>
             </div>
             
-            <div class="endpoint">
-                <span class="method get">GET</span>
-                <strong>/api/proxy/stats</strong>
-                <p>Thống kê chi tiết proxy và tỷ lệ thành công</p>
-            </div>
-            
-            <h3>🔗 Nguồn Proxy ({total_sources} sources):</h3>
-            
-            <div class="source-category">
-                <h4>📋 Categorized Sources (HTTP Protocol):</h4>
-                <ul>
-                    {chr(10).join([f'<li><strong>{name}</strong></li>' for name in PROXY_SOURCE_LINKS["categorized"].keys()])}
-                </ul>
-            </div>
-            
-            <div class="source-category">
-                <h4>🔀 Mixed Sources (All Protocols):</h4>
-                <ul>
-                    {chr(10).join([f'<li><strong>{name}</strong></li>' for name in PROXY_SOURCE_LINKS["mixed"].keys()])}
-                </ul>
+            <div class="update-time">
+                <p>⏱️ Tự động cập nhật mỗi 10 giây | 🔄 Cache refresh mỗi 10 phút</p>
+                <p>📊 Service tối ưu cho Render Free Plan với xử lý chunk và resource management</p>
             </div>
         </div>
         
         <script>
             function updateStats() {{
                 fetch('/api/proxy/stats')
-                    .then(r => r.json())
+                    .then(response => response.json())
                     .then(data => {{
-                        const successRate = data.total_checked > 0 ? (data.alive_count / data.total_checked * 100).toFixed(1) : '0';
+                        // Update stats
                         document.getElementById('stats').innerHTML = 
-                            '<div class="live-count">' + data.alive_count + ' PROXY SỐNG</div>' +
-                            '<div class="success-rate">Tỷ lệ thành công: ' + successRate + '%</div>' +
-                            '<p><strong>Tổng đã kiểm tra:</strong> ' + data.total_checked + ' proxies</p>' +
-                            '<p><strong>Nguồn xử lý:</strong> ' + (data.sources_processed || 0) + '/' + data.sources_count + '</p>' +
+                            '<p><strong>Proxy sống:</strong> ' + data.alive_count + '</p>' +
+                            '<p><strong>Tổng đã check:</strong> ' + data.total_checked + '</p>' +
+                            '<p><strong>Tỷ lệ thành công:</strong> ' + data.success_rate + '%</p>' +
+                            '<p><strong>Nguồn đã xử lý:</strong> ' + data.sources_processed + '/' + data.sources_count + '</p>' +
                             '<p><strong>Lần check cuối:</strong> ' + (data.last_update ? new Date(data.last_update).toLocaleString() : 'Chưa check') + '</p>' +
                             '<p><strong>Tuổi cache:</strong> ' + (data.cache_age_minutes || 0) + ' phút (tự động làm mới mỗi 10 phút)</p>';
                         
@@ -624,7 +734,6 @@ if __name__ == '__main__':
             
     except Exception as e:
         log_to_render(f"❌ LỖI NGHIÊM TRỌNG INITIAL LOAD: {str(e)}")
-        import traceback
         log_to_render(f"📍 Traceback: {traceback.format_exc()}")
         # Set empty cache để service vẫn chạy
         proxy_cache["http"] = []
@@ -644,5 +753,4 @@ if __name__ == '__main__':
         app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:
         log_to_render(f"❌ LỖI FLASK: {str(e)}")
-        import traceback
         log_to_render(f"📍 Flask Traceback: {traceback.format_exc()}") 
