@@ -473,9 +473,12 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
                         proxy_cache["total_checked"] = chunk_start + checked_count
                         proxy_cache["last_update"] = datetime.now().isoformat()
                         
-                        # Debug log cache update
+                        # Debug log cache update + FORCE GLOBAL UPDATE
                         if len(alive_proxies) <= 5:  # Only log first few for debugging
                             log_to_render(f"🔧 CACHE UPDATE: alive_count={len(alive_proxies)}, total_checked={chunk_start + checked_count}")
+                            log_to_render(f"🔧 FORCE UPDATE GLOBAL: Process {os.getpid()}")
+                            # Force update globals để debug
+                            globals()['proxy_cache'] = proxy_cache
                         
                         # Format protocols info for display
                         if proxy_type == 'mixed':
@@ -907,6 +910,77 @@ def get_proxy_stats():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/proxies', methods=['GET'])
+def get_proxies_simple():
+    """API đơn giản để lấy proxy sống - cho tool sử dụng"""
+    try:
+        count = int(request.args.get('count', 100))
+        format_type = request.args.get('format', 'json')  # json hoặc text
+        
+        # Lấy từ cache hoặc trả về empty nếu cache rỗng
+        alive_proxies = proxy_cache.get('http', [])
+        
+        if not alive_proxies:
+            # Nếu cache rỗng, có thể return empty nhưng log để debug
+            log_to_render(f"🔍 API /proxies called - cache empty, process {os.getpid()}")
+            return jsonify({
+                'success': False,
+                'message': 'No live proxies available yet. Service is still validating.',
+                'count': 0,
+                'proxies': [],
+                'cache_status': 'empty',
+                'process_id': os.getpid()
+            })
+        
+        # Sort by speed và lấy số lượng yêu cầu
+        sorted_proxies = sorted(alive_proxies, key=lambda x: x.get('speed', 999))[:count]
+        
+        if format_type == 'text':
+            # Format text: host:port per line
+            proxy_list = [f"{p['host']}:{p['port']}" for p in sorted_proxies]
+            return '\n'.join(proxy_list), 200, {'Content-Type': 'text/plain'}
+        
+        # Format JSON (default)
+        return jsonify({
+            'success': True,
+            'count': len(sorted_proxies),
+            'total_available': len(alive_proxies),
+            'proxies': [
+                {
+                    'host': p['host'],
+                    'port': p['port'],
+                    'type': p['type'],
+                    'speed': p['speed'],
+                    'proxy': f"{p['host']}:{p['port']}"
+                } for p in sorted_proxies
+            ],
+            'last_update': proxy_cache.get('last_update'),
+            'process_id': os.getpid()
+        })
+        
+    except Exception as e:
+        log_to_render(f"❌ API /proxies error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'process_id': os.getpid()
+        }), 500
+
+@app.route('/api/debug', methods=['GET'])
+def debug_cache():
+    """Debug cache để kiểm tra vấn đề"""
+    log_to_render("🔧 DEBUG cache được gọi")
+    
+    return jsonify({
+        'process_id': os.getpid(),
+        'proxy_cache': proxy_cache,
+        'cache_http_length': len(proxy_cache.get('http', [])),
+        'cache_alive_count': proxy_cache.get('alive_count', 0),
+        'cache_total_checked': proxy_cache.get('total_checked', 0),
+        'startup_status': startup_status,
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
