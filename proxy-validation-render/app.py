@@ -682,75 +682,95 @@ def health_check():
 
 if __name__ == '__main__':
     # Khởi tạo service với logs chi tiết
-    print("=" * 60)
-    log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
-    log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM)")
-    log_to_render("📋 Cấu hình: Timeout=6s, Workers=15, Chunks=300, Max=800")
-    print("=" * 60)
-    
-    # Start background refresh thread
-    log_to_render("🔄 ĐANG KHỞI ĐỘNG BACKGROUND THREAD...")
     try:
-        refresh_thread = threading.Thread(target=background_proxy_refresh, daemon=True)
-        refresh_thread.start()
-        log_to_render("✅ Background thread đã khởi động thành công!")
-    except Exception as e:
-        log_to_render(f"❌ LỖI khởi động background thread: {str(e)}")
-    
-    # Initial proxy load - optimized for Render free
-    log_to_render("📥 BẮT ĐẦU INITIAL LOAD...")
-    try:
-        log_to_render("🌐 Đang fetch từ các nguồn proxy...")
-        initial_proxies, sources_count = fetch_proxies_from_sources()
+        print("=" * 60)
+        log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
+        log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM)")
+        log_to_render("📋 Cấu hình: Timeout=6s, Workers=15, Chunks=300, Max=800")
+        print("=" * 60)
         
-        if initial_proxies:
-            log_to_render(f"📊 Fetch thành công: {len(initial_proxies)} proxy từ {sources_count} nguồn")
-            log_to_render("⚡ Bắt đầu validation initial proxies...")
+        # Test logging system trước
+        log_to_render("🧪 TESTING LOG SYSTEM...")
+        log_to_render("✅ Log system hoạt động!")
+        
+        # Test basic imports
+        log_to_render("📦 Testing imports...")
+        import threading
+        import requests
+        import time
+        log_to_render("✅ All imports OK!")
+        
+        # Test functions exist
+        log_to_render("🔧 Testing functions...")
+        if callable(background_proxy_refresh):
+            log_to_render("✅ background_proxy_refresh function OK")
+        if callable(fetch_proxies_from_sources):
+            log_to_render("✅ fetch_proxies_from_sources function OK")
+        if callable(validate_proxy_batch_smart):
+            log_to_render("✅ validate_proxy_batch_smart function OK")
             
-            # Validate với chunk processing
-            initial_alive = validate_proxy_batch_smart(initial_proxies)
+        # Start background refresh thread với extensive error handling
+        log_to_render("🔄 ĐANG KHỞI ĐỘNG BACKGROUND THREAD...")
+        try:
+            log_to_render("🧵 Creating thread object...")
+            refresh_thread = threading.Thread(target=background_proxy_refresh, daemon=True)
+            log_to_render("🧵 Thread object created successfully")
             
-            # Cập nhật cache
-            proxy_cache["http"] = initial_alive
-            proxy_cache["last_update"] = datetime.now().isoformat()
-            proxy_cache["total_checked"] = min(len(initial_proxies), 800)  # Actual processed
-            proxy_cache["alive_count"] = len(initial_alive)
-            proxy_cache["sources_processed"] = sources_count
+            log_to_render("🚀 Starting thread...")
+            refresh_thread.start()
+            log_to_render("✅ Background thread started!")
             
-            success_rate = round(len(initial_alive)/proxy_cache["total_checked"]*100, 1) if proxy_cache["total_checked"] > 0 else 0
-            log_to_render(f"✅ INITIAL LOAD HOÀN THÀNH!")
-            log_to_render(f"📊 Kết quả: {len(initial_alive)} proxy sống / {proxy_cache['total_checked']} tested")
-            log_to_render(f"📈 Tỷ lệ thành công: {success_rate}%")
-            log_to_render("💾 Cache đã được cập nhật - Service sẵn sàng!")
-        else:
-            log_to_render("❌ THẤT BẠI: Không fetch được proxy trong initial load")
-            log_to_render("🔍 Background thread sẽ tiếp tục thử...")
-            # Set empty cache
-            proxy_cache["http"] = []
-            proxy_cache["last_update"] = datetime.now().isoformat()
-            proxy_cache["total_checked"] = 0
-            proxy_cache["alive_count"] = 0
-            proxy_cache["sources_processed"] = 0
-            
-    except Exception as e:
-        log_to_render(f"❌ LỖI NGHIÊM TRỌNG INITIAL LOAD: {str(e)}")
-        log_to_render(f"📍 Traceback: {traceback.format_exc()}")
-        # Set empty cache để service vẫn chạy
+            # Verify thread is running
+            if refresh_thread.is_alive():
+                log_to_render("✅ Background thread confirmed ALIVE!")
+            else:
+                log_to_render("❌ Background thread not alive!")
+                
+        except Exception as e:
+            log_to_render(f"❌ LỖI CRITICAL khởi động background thread: {str(e)}")
+            log_to_render(f"📍 Thread Error Traceback: {traceback.format_exc()}")
+        
+        # SKIP initial load để test background thread trước
+        log_to_render("⏭️ SKIPPING INITIAL LOAD để test background thread")
+        log_to_render("🔄 Background thread sẽ tự động fetch trong vài giây...")
+        
+        # Set empty cache để service vẫn start được
         proxy_cache["http"] = []
         proxy_cache["last_update"] = datetime.now().isoformat()
         proxy_cache["total_checked"] = 0
         proxy_cache["alive_count"] = 0
         proxy_cache["sources_processed"] = 0
-    
-    # Start Flask app
-    port = int(os.environ.get('PORT', 5000))
-    log_to_render("=" * 60)
-    log_to_render(f"🌐 KHỞI ĐỘNG FLASK SERVER TRÊN PORT {port}")
-    log_to_render("🎯 Service đã sẵn sàng nhận requests!")
-    log_to_render("=" * 60)
-    
-    try:
-        app.run(host='0.0.0.0', port=port, debug=False)
+        log_to_render("💾 Empty cache set để service có thể start")
+        
+        # Start Flask app
+        port = int(os.environ.get('PORT', 5000))
+        log_to_render("=" * 60)
+        log_to_render(f"🌐 KHỞI ĐỘNG FLASK SERVER TRÊN PORT {port}")
+        log_to_render("🎯 Service đã sẵn sàng nhận requests!")
+        log_to_render("🔄 Background thread should be running now...")
+        log_to_render("=" * 60)
+        
+        # Final test để đảm bảo thread vẫn alive trước khi start Flask
+        time.sleep(1)  # Give thread 1 second to start
+        if 'refresh_thread' in locals() and refresh_thread.is_alive():
+            log_to_render("✅ FINAL CHECK: Background thread still alive before Flask start")
+        else:
+            log_to_render("❌ FINAL CHECK: Background thread died!")
+        
+        try:
+            app.run(host='0.0.0.0', port=port, debug=False)
+        except Exception as e:
+            log_to_render(f"❌ LỖI FLASK: {str(e)}")
+            log_to_render(f"📍 Flask Traceback: {traceback.format_exc()}")
+            
     except Exception as e:
-        log_to_render(f"❌ LỖI FLASK: {str(e)}")
-        log_to_render(f"📍 Flask Traceback: {traceback.format_exc()}") 
+        log_to_render(f"❌ LỖI CRITICAL MAIN: {str(e)}")
+        log_to_render(f"📍 Main Traceback: {traceback.format_exc()}")
+        # Try to start minimal Flask anyway
+        try:
+            log_to_render("🆘 EMERGENCY MODE: Starting minimal Flask...")
+            port = int(os.environ.get('PORT', 5000))
+            app.run(host='0.0.0.0', port=port, debug=False)
+        except Exception as flask_e:
+            log_to_render(f"💀 TOTAL FAILURE: {str(flask_e)}")
+            log_to_render(f"📍 Final Traceback: {traceback.format_exc()}") 
