@@ -112,6 +112,8 @@ def initialize_service():
         log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
         log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM)")
         log_to_render("📋 Cấu hình: Timeout=6s, Workers=15, Chunks=300, Max=800")
+        log_to_render(f"🔧 Service Process ID: {os.getpid()}")
+        log_to_render("🔧 Gunicorn forced to 1 worker (cache shared)")
         
         # Test logging system
         log_to_render("🧪 TESTING LOG SYSTEM...")
@@ -412,6 +414,7 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
     
     log_to_render(f"⚡ BẮT ĐẦU VALIDATE {total_proxies} PROXY")
     log_to_render(f"🔧 Cấu hình: {max_workers} workers, chunks={chunk_size}")
+    log_to_render(f"🔧 Validate Process ID: {os.getpid()}")
     
     # Reset cache trước khi validate
     proxy_cache["total_checked"] = 0
@@ -470,6 +473,10 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
                         proxy_cache["total_checked"] = chunk_start + checked_count
                         proxy_cache["last_update"] = datetime.now().isoformat()
                         
+                        # Debug log cache update
+                        if len(alive_proxies) <= 5:  # Only log first few for debugging
+                            log_to_render(f"🔧 CACHE UPDATE: alive_count={len(alive_proxies)}, total_checked={chunk_start + checked_count}")
+                        
                         # Format protocols info for display
                         if proxy_type == 'mixed':
                             protocols_display = f"mixed|{result['type']}"
@@ -503,6 +510,10 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
     proxy_cache["alive_count"] = len(alive_proxies)
     proxy_cache["total_checked"] = total_proxies
     proxy_cache["last_update"] = datetime.now().isoformat()
+    
+    # Debug final cache state
+    log_to_render(f"🔧 FINAL CACHE UPDATE: alive_count={len(alive_proxies)}, total_checked={total_proxies}")
+    log_to_render(f"🔧 FINAL proxy_cache state: alive_count={proxy_cache.get('alive_count')}, total_checked={proxy_cache.get('total_checked')}")
     
     success_rate = round(len(alive_proxies)/total_proxies*100, 1) if total_proxies > 0 else 0
     log_to_render(f"🎯 VALIDATION HOÀN THÀNH!")
@@ -849,6 +860,7 @@ def get_proxy_stats():
     try:
         # Log để debug khi có request
         log_to_render("📊 API /stats được gọi")
+        log_to_render(f"🔧 Process ID: {os.getpid()}")
         
         last_update = proxy_cache.get('last_update')
         cache_age_minutes = 0
@@ -867,6 +879,7 @@ def get_proxy_stats():
         
         log_to_render(f"📈 Stats: {alive_count} alive, {total_checked} checked, {success_rate}% success")
         log_to_render(f"🔍 Cache details: http_list={len(proxy_cache.get('http', []))}, alive_count_cache={proxy_cache.get('alive_count', 0)}")
+        log_to_render(f"🔍 Full cache state: {proxy_cache}")
         
         return jsonify({
             'success': True,
