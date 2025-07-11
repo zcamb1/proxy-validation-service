@@ -9,8 +9,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
 import sys
 import traceback
+from collections import deque
 
 app = Flask(__name__)
+
+# Global log buffer để store logs cho real-time display
+log_buffer = deque(maxlen=500)  # Keep last 500 log entries
+startup_status = {
+    "initialized": False,
+    "background_thread_started": False,
+    "first_fetch_completed": False,
+    "error_count": 0,
+    "last_activity": None
+}
 
 # Cache proxy sống
 proxy_cache = {
@@ -42,11 +53,95 @@ PROXY_SOURCE_LINKS = {
 }
 
 def log_to_render(message, level="INFO"):
-    """Log với format rõ ràng cho Render logs"""
+    """Log với format rõ ràng cho Render logs và web display"""
     timestamp = datetime.now().strftime("%H:%M:%S")
     log_msg = f"[{level}] {timestamp} | {message}"
+    
+    # Console log
     print(log_msg)
-    sys.stdout.flush()  # Force flush để logs hiện ngay trong Render
+    sys.stdout.flush()
+    
+    # Web log buffer
+    log_buffer.append({
+        "timestamp": timestamp,
+        "level": level,
+        "message": message,
+        "full_log": log_msg
+    })
+    
+    # Update activity
+    startup_status["last_activity"] = datetime.now().isoformat()
+
+def initialize_service():
+    """Initialize service - được gọi khi Flask app start"""
+    if startup_status["initialized"]:
+        return
+        
+    try:
+        log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
+        log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM)")
+        log_to_render("📋 Cấu hình: Timeout=6s, Workers=15, Chunks=300, Max=800")
+        
+        # Test logging system
+        log_to_render("🧪 TESTING LOG SYSTEM...")
+        log_to_render("✅ Log system hoạt động!")
+        
+        # Test basic imports
+        log_to_render("📦 Testing imports...")
+        import threading
+        import requests
+        import time
+        log_to_render("✅ All imports OK!")
+        
+        # Test functions exist
+        log_to_render("🔧 Testing functions...")
+        if callable(background_proxy_refresh):
+            log_to_render("✅ background_proxy_refresh function OK")
+        if callable(fetch_proxies_from_sources):
+            log_to_render("✅ fetch_proxies_from_sources function OK")
+        if callable(validate_proxy_batch_smart):
+            log_to_render("✅ validate_proxy_batch_smart function OK")
+            
+        # Start background thread
+        log_to_render("🔄 ĐANG KHỞI ĐỘNG BACKGROUND THREAD...")
+        try:
+            log_to_render("🧵 Creating thread object...")
+            refresh_thread = threading.Thread(target=background_proxy_refresh, daemon=True)
+            log_to_render("🧵 Thread object created successfully")
+            
+            log_to_render("🚀 Starting thread...")
+            refresh_thread.start()
+            log_to_render("✅ Background thread started!")
+            
+            # Verify thread is running
+            if refresh_thread.is_alive():
+                log_to_render("✅ Background thread confirmed ALIVE!")
+                startup_status["background_thread_started"] = True
+            else:
+                log_to_render("❌ Background thread not alive!")
+                startup_status["error_count"] += 1
+                
+        except Exception as e:
+            log_to_render(f"❌ LỖI CRITICAL khởi động background thread: {str(e)}")
+            log_to_render(f"📍 Thread Error Traceback: {traceback.format_exc()}")
+            startup_status["error_count"] += 1
+        
+        # Set empty cache initially
+        log_to_render("💾 Setting initial empty cache...")
+        proxy_cache["http"] = []
+        proxy_cache["last_update"] = datetime.now().isoformat()
+        proxy_cache["total_checked"] = 0
+        proxy_cache["alive_count"] = 0
+        proxy_cache["sources_processed"] = 0
+        
+        startup_status["initialized"] = True
+        log_to_render("✅ SERVICE INITIALIZATION COMPLETED!")
+        log_to_render("🔄 Background thread sẽ tự động fetch proxy...")
+        
+    except Exception as e:
+        log_to_render(f"❌ LỖI CRITICAL INITIALIZATION: {str(e)}")
+        log_to_render(f"📍 Init Traceback: {traceback.format_exc()}")
+        startup_status["error_count"] += 1
 
 def check_single_proxy(proxy_string, timeout=6, protocols=['http']):
     """Kiểm tra 1 proxy với các protocols khác nhau - tối ưu cho Render"""
@@ -326,6 +421,10 @@ def background_proxy_refresh():
     """Background thread để refresh proxy cache định kỳ - tối ưu cho Render"""
     log_to_render("🔄 BACKGROUND THREAD KHỞI ĐỘNG")
     
+    # Wait a bit for service to stabilize
+    log_to_render("⏳ Waiting 10 seconds for service stabilization...")
+    time.sleep(10)
+    
     while True:
         try:
             log_to_render("=" * 50)
@@ -355,6 +454,8 @@ def background_proxy_refresh():
                 cycle_time = round(time.time() - start_time, 1)
                 success_rate = round(len(alive_proxies)/len(proxy_list)*100, 1) if proxy_list else 0
                 
+                startup_status["first_fetch_completed"] = True
+                
                 log_to_render("=" * 50)
                 log_to_render("✅ CHU KỲ REFRESH HOÀN THÀNH!")
                 log_to_render(f"⏱️ Thời gian: {cycle_time}s")
@@ -371,21 +472,25 @@ def background_proxy_refresh():
             log_to_render(f"❌ LỖI BACKGROUND REFRESH: {str(e)}")
             log_to_render(f"📍 Traceback: {traceback.format_exc()}")
             log_to_render("🔄 Tiếp tục vòng lặp...")
+            startup_status["error_count"] += 1
         
         # Sleep 10 phút trước chu kỳ tiếp theo
         log_to_render("😴 Sleep 10 phút trước chu kỳ tiếp theo...")
         time.sleep(600)  # 10 minutes
 
+# Initialize service when Flask starts
+initialize_service()
+
 @app.route('/')
 def home():
-    """UI chính với auto-refresh"""
+    """UI chính với real-time logs"""
     html = f"""
     <!DOCTYPE html>
     <html lang="vi">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Proxy Validation Service</title>
+        <title>Proxy Validation Service - Real Time</title>
         <style>
             body {{
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -396,7 +501,7 @@ def home():
                 color: white;
             }}
             .container {{
-                max-width: 1200px;
+                max-width: 1400px;
                 margin: 0 auto;
                 background: rgba(255, 255, 255, 0.1);
                 backdrop-filter: blur(10px);
@@ -441,7 +546,7 @@ def home():
             }}
             .grid {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                grid-template-columns: 1fr 1fr;
                 gap: 20px;
                 margin-top: 30px;
             }}
@@ -457,21 +562,25 @@ def home():
                 border-bottom: 2px solid rgba(255, 255, 255, 0.3);
                 padding-bottom: 10px;
             }}
-            .api-section {{
-                margin-top: 30px;
-                padding: 20px;
-                background: rgba(0, 0, 0, 0.2);
+            .logs-container {{
+                grid-column: 1 / -1;
+                background: rgba(0, 0, 0, 0.3);
                 border-radius: 15px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 20px;
+                max-height: 500px;
+                overflow-y: auto;
             }}
-            .api-endpoint {{
-                background: rgba(255, 255, 255, 0.1);
-                padding: 10px;
-                border-radius: 8px;
-                margin: 10px 0;
+            .log-entry {{
                 font-family: 'Courier New', monospace;
-                border-left: 4px solid #4CAF50;
+                font-size: 0.9em;
+                margin: 2px 0;
+                padding: 3px 8px;
+                border-radius: 4px;
+                word-wrap: break-word;
             }}
+            .log-INFO {{ background: rgba(33, 150, 243, 0.2); }}
+            .log-ERROR {{ background: rgba(244, 67, 54, 0.3); }}
+            .log-SUCCESS {{ background: rgba(76, 175, 80, 0.2); }}
             .update-time {{
                 font-size: 0.9em;
                 opacity: 0.8;
@@ -484,7 +593,7 @@ def home():
         <div class="container">
             <div class="header">
                 <h1>🚀 Proxy Validation Service</h1>
-                <p>Tự động tìm và validate proxy từ nhiều nguồn - Tối ưu cho Render Free Plan</p>
+                <p>Real-time monitoring và logging - Tối ưu cho Render Free Plan</p>
             </div>
             
             <div id="system-status" class="status status-error">
@@ -500,48 +609,23 @@ def home():
                 </div>
                 
                 <div class="card">
-                    <h3>⚙️ Cấu Hình Hệ Thống</h3>
-                    <div id="config">
-                        <p><strong>Render Plan:</strong> Free (512MB RAM)</p>
-                        <p><strong>Timeout:</strong> 6 giây</p>
-                        <p><strong>Workers:</strong> 15 threads</p>
-                        <p><strong>Chunk Size:</strong> 300 proxy/batch</p>
-                        <p><strong>Max Total:</strong> 800 proxy/cycle</p>
-                        <p><strong>Refresh:</strong> Mỗi 10 phút</p>
-                        <p><strong>Processing:</strong> Chunk mode với sleep</p>
+                    <h3>⚙️ Trạng Thái Hệ Thống</h3>
+                    <div id="system-info">
+                        <p>Đang tải...</p>
                     </div>
                 </div>
                 
-                <div class="card">
-                    <h3>🌐 Nguồn Proxy</h3>
-                    <div id="sources">
-                        <p><strong>Categorized Sources:</strong> {len(PROXY_SOURCE_LINKS["categorized"])}</p>
-                        <p><strong>Mixed Sources:</strong> {len(PROXY_SOURCE_LINKS["mixed"])}</p>
-                        <p><strong>Tổng:</strong> {len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"])} nguồn</p>
-                        <p><strong>Logic:</strong> Categorized trước, Mixed sau</p>
+                <div class="logs-container">
+                    <h3>📜 Real-Time Logs</h3>
+                    <div id="logs" style="max-height: 400px; overflow-y: auto;">
+                        <p>Đang tải logs...</p>
                     </div>
-                </div>
-            </div>
-            
-            <div class="api-section">
-                <h3>🔗 API Endpoints</h3>
-                <div class="api-endpoint">
-                    <strong>GET /api/proxy/alive?count=50</strong><br>
-                    Lấy danh sách proxy sống (mặc định 50)
-                </div>
-                <div class="api-endpoint">
-                    <strong>GET /api/proxy/stats</strong><br>
-                    Thống kê chi tiết về proxy và service
-                </div>
-                <div class="api-endpoint">
-                    <strong>GET /api/health</strong><br>
-                    Health check service
                 </div>
             </div>
             
             <div class="update-time">
-                <p>⏱️ Tự động cập nhật mỗi 10 giây | 🔄 Cache refresh mỗi 10 phút</p>
-                <p>📊 Service tối ưu cho Render Free Plan với xử lý chunk và resource management</p>
+                <p>⏱️ Tự động cập nhật mỗi 5 giây | 🔄 Logs real-time</p>
+                <p>📊 Service monitoring với chi tiết từng bước</p>
             </div>
         </div>
         
@@ -556,8 +640,7 @@ def home():
                             '<p><strong>Tổng đã check:</strong> ' + data.total_checked + '</p>' +
                             '<p><strong>Tỷ lệ thành công:</strong> ' + data.success_rate + '%</p>' +
                             '<p><strong>Nguồn đã xử lý:</strong> ' + data.sources_processed + '/' + data.sources_count + '</p>' +
-                            '<p><strong>Lần check cuối:</strong> ' + (data.last_update ? new Date(data.last_update).toLocaleString() : 'Chưa check') + '</p>' +
-                            '<p><strong>Tuổi cache:</strong> ' + (data.cache_age_minutes || 0) + ' phút (tự động làm mới mỗi 10 phút)</p>';
+                            '<p><strong>Lần check cuối:</strong> ' + (data.last_update ? new Date(data.last_update).toLocaleString() : 'Chưa check') + '</p>';
                         
                         // Update status
                         const statusEl = document.getElementById('current-status');
@@ -579,14 +662,65 @@ def home():
                     }});
             }}
             
-            // Auto-update every 10 seconds
+            function updateLogs() {{
+                fetch('/api/logs')
+                    .then(response => response.json())
+                    .then(data => {{
+                        const logsContainer = document.getElementById('logs');
+                        
+                        if (data.logs && data.logs.length > 0) {{
+                            logsContainer.innerHTML = data.logs.map(log => 
+                                '<div class="log-entry log-' + log.level + '">' + log.full_log + '</div>'
+                            ).join('');
+                            logsContainer.scrollTop = logsContainer.scrollHeight;
+                        }}
+                        
+                        // Update system info
+                        document.getElementById('system-info').innerHTML = 
+                            '<p><strong>Khởi tạo:</strong> ' + (data.startup.initialized ? '✅' : '❌') + '</p>' +
+                            '<p><strong>Background Thread:</strong> ' + (data.startup.background_thread_started ? '✅' : '❌') + '</p>' +
+                            '<p><strong>First Fetch:</strong> ' + (data.startup.first_fetch_completed ? '✅' : '❌') + '</p>' +
+                            '<p><strong>Errors:</strong> ' + data.startup.error_count + '</p>' +
+                            '<p><strong>Hoạt động cuối:</strong> ' + (data.startup.last_activity ? new Date(data.startup.last_activity).toLocaleTimeString() : 'N/A') + '</p>';
+                    }})
+                    .catch(e => {{
+                        console.log('Error fetching logs:', e);
+                    }});
+            }}
+            
+            // Update every 5 seconds
             updateStats();
-            setInterval(updateStats, 10000);
+            updateLogs();
+            setInterval(updateStats, 5000);
+            setInterval(updateLogs, 3000);  // Logs update faster
         </script>
     </body>
     </html>
     """
     return html
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    """API để lấy real-time logs"""
+    try:
+        log_to_render("🔍 API /logs được gọi")
+        
+        # Return recent logs
+        recent_logs = list(log_buffer)[-100:]  # Last 100 logs
+        
+        return jsonify({
+            'success': True,
+            'logs': recent_logs,
+            'total_logs': len(log_buffer),
+            'startup': startup_status,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/proxy/alive', methods=['GET'])
 def get_alive_proxies():
@@ -677,100 +811,16 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'cache_count': len(proxy_cache.get('http', [])),
-        'service': 'proxy-validation-render'
+        'service': 'proxy-validation-render',
+        'startup_status': startup_status
     })
 
 if __name__ == '__main__':
-    # Khởi tạo service với logs chi tiết
+    # Fallback cho local development
     try:
-        print("=" * 60)
-        log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
-        log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM)")
-        log_to_render("📋 Cấu hình: Timeout=6s, Workers=15, Chunks=300, Max=800")
-        print("=" * 60)
-        
-        # Test logging system trước
-        log_to_render("🧪 TESTING LOG SYSTEM...")
-        log_to_render("✅ Log system hoạt động!")
-        
-        # Test basic imports
-        log_to_render("📦 Testing imports...")
-        import threading
-        import requests
-        import time
-        log_to_render("✅ All imports OK!")
-        
-        # Test functions exist
-        log_to_render("🔧 Testing functions...")
-        if callable(background_proxy_refresh):
-            log_to_render("✅ background_proxy_refresh function OK")
-        if callable(fetch_proxies_from_sources):
-            log_to_render("✅ fetch_proxies_from_sources function OK")
-        if callable(validate_proxy_batch_smart):
-            log_to_render("✅ validate_proxy_batch_smart function OK")
-            
-        # Start background refresh thread với extensive error handling
-        log_to_render("🔄 ĐANG KHỞI ĐỘNG BACKGROUND THREAD...")
-        try:
-            log_to_render("🧵 Creating thread object...")
-            refresh_thread = threading.Thread(target=background_proxy_refresh, daemon=True)
-            log_to_render("🧵 Thread object created successfully")
-            
-            log_to_render("🚀 Starting thread...")
-            refresh_thread.start()
-            log_to_render("✅ Background thread started!")
-            
-            # Verify thread is running
-            if refresh_thread.is_alive():
-                log_to_render("✅ Background thread confirmed ALIVE!")
-            else:
-                log_to_render("❌ Background thread not alive!")
-                
-        except Exception as e:
-            log_to_render(f"❌ LỖI CRITICAL khởi động background thread: {str(e)}")
-            log_to_render(f"📍 Thread Error Traceback: {traceback.format_exc()}")
-        
-        # SKIP initial load để test background thread trước
-        log_to_render("⏭️ SKIPPING INITIAL LOAD để test background thread")
-        log_to_render("🔄 Background thread sẽ tự động fetch trong vài giây...")
-        
-        # Set empty cache để service vẫn start được
-        proxy_cache["http"] = []
-        proxy_cache["last_update"] = datetime.now().isoformat()
-        proxy_cache["total_checked"] = 0
-        proxy_cache["alive_count"] = 0
-        proxy_cache["sources_processed"] = 0
-        log_to_render("💾 Empty cache set để service có thể start")
-        
-        # Start Flask app
         port = int(os.environ.get('PORT', 5000))
-        log_to_render("=" * 60)
-        log_to_render(f"🌐 KHỞI ĐỘNG FLASK SERVER TRÊN PORT {port}")
-        log_to_render("🎯 Service đã sẵn sàng nhận requests!")
-        log_to_render("🔄 Background thread should be running now...")
-        log_to_render("=" * 60)
-        
-        # Final test để đảm bảo thread vẫn alive trước khi start Flask
-        time.sleep(1)  # Give thread 1 second to start
-        if 'refresh_thread' in locals() and refresh_thread.is_alive():
-            log_to_render("✅ FINAL CHECK: Background thread still alive before Flask start")
-        else:
-            log_to_render("❌ FINAL CHECK: Background thread died!")
-        
-        try:
-            app.run(host='0.0.0.0', port=port, debug=False)
-        except Exception as e:
-            log_to_render(f"❌ LỖI FLASK: {str(e)}")
-            log_to_render(f"📍 Flask Traceback: {traceback.format_exc()}")
-            
+        log_to_render("🔧 LOCAL DEVELOPMENT MODE")
+        app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:
-        log_to_render(f"❌ LỖI CRITICAL MAIN: {str(e)}")
-        log_to_render(f"📍 Main Traceback: {traceback.format_exc()}")
-        # Try to start minimal Flask anyway
-        try:
-            log_to_render("🆘 EMERGENCY MODE: Starting minimal Flask...")
-            port = int(os.environ.get('PORT', 5000))
-            app.run(host='0.0.0.0', port=port, debug=False)
-        except Exception as flask_e:
-            log_to_render(f"💀 TOTAL FAILURE: {str(flask_e)}")
-            log_to_render(f"📍 Final Traceback: {traceback.format_exc()}") 
+        log_to_render(f"❌ LỖI LOCAL: {str(e)}")
+        print(f"Error: {e}") 
