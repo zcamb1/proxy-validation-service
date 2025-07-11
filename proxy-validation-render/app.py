@@ -995,11 +995,12 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    # Fallback cho local development
+    # Render production mode
     try:
         port = int(os.environ.get('PORT', 5000))
-        log_to_render("🔧 LOCAL DEVELOPMENT MODE")
-        app.run(host='0.0.0.0', port=port, debug=False)
+        log_to_render("🚀 STARTING RENDER PRODUCTION MODE")
+        log_to_render(f"🔧 Port: {port}")
+        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
     except Exception as e:
-        log_to_render(f"❌ LỖI LOCAL: {str(e)}")
+        log_to_render(f"❌ LỖI PRODUCTION: {str(e)}")
         print(f"Error: {e}") 
