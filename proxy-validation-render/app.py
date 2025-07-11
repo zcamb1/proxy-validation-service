@@ -404,12 +404,18 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
         log_to_render("⚠️ Không có proxy để validate")
         return []
     
+    # Sử dụng global cache để update real-time
+    global proxy_cache
     alive_proxies = []
     chunk_size = 300  # Process theo chunks
     total_proxies = len(proxy_list)
     
     log_to_render(f"⚡ BẮT ĐẦU VALIDATE {total_proxies} PROXY")
     log_to_render(f"🔧 Cấu hình: {max_workers} workers, chunks={chunk_size}")
+    
+    # Reset cache trước khi validate
+    proxy_cache["total_checked"] = 0
+    proxy_cache["alive_count"] = 0
     
     # Process theo chunks để tránh overload
     for chunk_start in range(0, total_proxies, chunk_size):
@@ -456,10 +462,12 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
                     result = future.result()
                     if result:
                         chunk_alive.append(result)
-                        # Update cache real-time - add only this result
                         alive_proxies.append(result)
-                        proxy_cache["http"] = alive_proxies
+                        
+                        # Update cache REALTIME với tất cả proxy sống tìm được
+                        proxy_cache["http"] = alive_proxies.copy()
                         proxy_cache["alive_count"] = len(alive_proxies)
+                        proxy_cache["total_checked"] = chunk_start + checked_count
                         proxy_cache["last_update"] = datetime.now().isoformat()
                         
                         # Format protocols info for display
@@ -470,17 +478,17 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
                             
                         log_to_render(f"✅ SỐNG ({protocols_display}): {result['host']}:{result['port']} ({result['speed']}s) [{checked_count}/{len(chunk)}]")
                     else:
+                        # Update total checked even for failed
+                        proxy_cache["total_checked"] = chunk_start + checked_count
+                        
                         if checked_count % 50 == 0:  # Log mỗi 50 proxy để không spam
                             log_to_render(f"⏳ Progress: {checked_count}/{len(chunk)} checked, {len(chunk_alive)} alive")
-                    
-                    # Update total checked real-time
-                    proxy_cache["total_checked"] = chunk_start + checked_count
                             
                 except Exception as e:
+                    proxy_cache["total_checked"] = chunk_start + checked_count
                     if checked_count % 100 == 0:  # Log errors occasionally
                         log_to_render(f"❌ Error checking proxy: {str(e)}")
         
-        alive_proxies.extend(chunk_alive)
         chunk_success_rate = round(len(chunk_alive)/len(chunk)*100, 1) if chunk else 0
         
         log_to_render(f"📊 Chunk {chunk_start//chunk_size + 1} hoàn thành: {len(chunk_alive)} alive / {len(chunk)} total ({chunk_success_rate}%)")
@@ -489,6 +497,12 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
         if chunk_end < total_proxies:
             log_to_render("😴 Sleep 2s giữa chunks...")
             time.sleep(2)
+    
+    # Final cache update
+    proxy_cache["http"] = alive_proxies.copy()
+    proxy_cache["alive_count"] = len(alive_proxies)
+    proxy_cache["total_checked"] = total_proxies
+    proxy_cache["last_update"] = datetime.now().isoformat()
     
     success_rate = round(len(alive_proxies)/total_proxies*100, 1) if total_proxies > 0 else 0
     log_to_render(f"🎯 VALIDATION HOÀN THÀNH!")
@@ -523,11 +537,8 @@ def background_proxy_refresh():
                 log_to_render("⚡ Bắt đầu validation...")
                 alive_proxies = validate_proxy_batch_smart(proxy_list)
                 
-                # Cập nhật cache
-                proxy_cache["http"] = alive_proxies
-                proxy_cache["last_update"] = datetime.now().isoformat()
-                proxy_cache["total_checked"] = len(proxy_list)
-                proxy_cache["alive_count"] = len(alive_proxies)
+                # Cache đã được update real-time trong validate function
+                # Chỉ cần update sources_processed
                 proxy_cache["sources_processed"] = sources_count
                 
                 cycle_time = round(time.time() - start_time, 1)
@@ -822,7 +833,8 @@ def get_alive_proxies():
             'proxies': result_proxies,
             'last_update': proxy_cache.get('last_update'),
             'timestamp': datetime.now().isoformat(),
-            'sources_count': len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"])
+            'sources_count': len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"]),
+            'cache_alive_count': proxy_cache.get('alive_count', 0)
         })
         
     except Exception as e:
@@ -845,15 +857,16 @@ def get_proxy_stats():
             last_update_dt = datetime.fromisoformat(last_update)
             cache_age_minutes = int((datetime.now() - last_update_dt).total_seconds() / 60)
         
-        # Calculate success rate
+        # Get from cache - now properly updated
         total_checked = proxy_cache.get('total_checked', 0)
-        alive_count = len(proxy_cache.get('http', []))
+        alive_count = proxy_cache.get('alive_count', 0)
         success_rate = round(alive_count / total_checked * 100, 2) if total_checked > 0 else 0
         
         # Count total sources
         total_sources = len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"])
         
         log_to_render(f"📈 Stats: {alive_count} alive, {total_checked} checked, {success_rate}% success")
+        log_to_render(f"🔍 Cache details: http_list={len(proxy_cache.get('http', []))}, alive_count_cache={proxy_cache.get('alive_count', 0)}")
         
         return jsonify({
             'success': True,
