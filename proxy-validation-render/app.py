@@ -115,6 +115,34 @@ PROXY_SOURCE_LINKS = {
         "clarketm": {
             "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
             "protocols": ["http", "https"]
+        },
+        "roosterkid": {
+            "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/PROXY_RAW.txt",
+            "protocols": ["http", "https", "socks4", "socks5"]
+        },
+        "zevtyardt": {
+            "url": "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/all.txt",
+            "protocols": ["http", "https", "socks4", "socks5"]
+        },
+        "proxy-server": {
+            "url": "https://raw.githubusercontent.com/proxy-server/proxy-list/main/proxy.txt",
+            "protocols": ["http", "https", "socks4", "socks5"]  
+        },
+        "rdavydov": {
+            "url": "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt",
+            "protocols": ["http", "https"]
+        },
+        "officialputuid": {
+            "url": "https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/http/http.txt",
+            "protocols": ["http", "https"]
+        },
+        "saschazesiger": {
+            "url": "https://raw.githubusercontent.com/saschazesiger/Free-Proxies/master/proxies/http.txt",
+            "protocols": ["http", "https"]
+        },
+        "premium-proxy": {
+            "url": "https://raw.githubusercontent.com/premium-proxy/proxy-list/main/http.txt",
+            "protocols": ["http", "https"]
         }
     }
 }
@@ -375,7 +403,7 @@ def fetch_proxies_from_sources():
             for source_protocol, source_url in protocols_to_fetch:
                 log_to_render(f"📡 Fetching Server Alpha - {source_protocol}...")
                 
-                response = get_with_session(source_url, timeout=30)
+                response = get_with_session(source_url, timeout=45)
                 
                 if response.status_code == 200:
                     content = response.text
@@ -434,7 +462,7 @@ def fetch_proxies_from_sources():
             for source_protocol, source_url in protocols_to_fetch:
                 log_to_render(f"📡 Fetching {source_name} - {source_protocol}...")
                 
-                response = get_with_session(source_url, timeout=30)
+                response = get_with_session(source_url, timeout=45)
                 
                 if response.status_code == 200:
                     content = response.text
@@ -485,7 +513,7 @@ def fetch_proxies_from_sources():
             source_protocols = source_config["protocols"]
             log_to_render(f"📡 Fetching {source_name} (protocols: {', '.join(source_protocols)})...")
             
-            response = get_with_session(source_url, timeout=30)
+            response = get_with_session(source_url, timeout=45)
             
             if response.status_code == 200:
                 content = response.text
@@ -528,7 +556,7 @@ def fetch_proxies_from_sources():
     # Combine tất cả proxy (Server Alpha + categorized khác + mixed)
     all_proxies = server_alpha_proxies + categorized_proxies + mixed_proxies
     random.shuffle(all_proxies)
-    limited_proxies = all_proxies[:2000]  # Giới hạn 2000 proxy để check nhiều hơn
+    limited_proxies = all_proxies[:3000]  # Tăng limit 3000 proxy để check nhiều hơn
     
     log_to_render(f"🎯 HOÀN THÀNH FETCH: {len(all_proxies)} total → {len(limited_proxies)} selected")
     log_to_render(f"📊 Đã xử lý {sources_processed} nguồn thành công")
