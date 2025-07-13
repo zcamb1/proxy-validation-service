@@ -761,6 +761,12 @@ def background_proxy_refresh():
                 log_to_render(f"🚀 CYCLE {cycle_count}: INITIAL FETCH MODE (CHIA CHUNK)")
                 elapsed_time = round((time.time() - initial_start_time) / 60, 1)
                 log_to_render(f"⏰ Elapsed: {elapsed_time} phút (timeout: 120 phút)")
+                
+                # DEBUG: Log để track cycle behavior
+                if cycle_count > 1:
+                    log_to_render("⚠️ WARNING: This is a REPEATED CYCLE - Previous cycle did not complete!")
+                    log_to_render("🔍 DEBUG: This should only happen if previous cycle was interrupted")
+                
                 log_to_render("=" * 60)
                 
                 start_time = time.time()
@@ -800,6 +806,14 @@ def background_proxy_refresh():
                         log_to_render(f"📈 Progress: {progress}% ({completed_chunks}/{total_chunks} chunks)")
                         log_to_render(f"📊 Total alive so far: {len(all_alive_proxies)}")
                         
+                        # Log đặc biệt để dễ track
+                        if chunk_idx % 10 == 0:  # Mỗi 10 chunks
+                            log_to_render("=" * 50)
+                            log_to_render(f"🎯 MILESTONE: Completed {chunk_idx} chunks out of {total_chunks}")
+                            log_to_render(f"⏰ Total runtime: {round((time.time() - start_time)/60, 1)} minutes")
+                            log_to_render(f"🏆 Success rate: {round(len(all_alive_proxies)/((chunk_idx-1)*chunk_size + len(chunk))*100, 1)}%")
+                            log_to_render("=" * 50)
+                        
                         # Sleep ngắn giữa các chunk để không overload
                         if chunk_idx < total_chunks:
                             log_to_render("⏳ Sleep 10s trước chunk tiếp theo...")
@@ -815,12 +829,14 @@ def background_proxy_refresh():
                     
                     alive_proxies = all_alive_proxies
                     
-                    # Chỉ mark complete khi ĐÃ XONG HẾT tất cả chunks
-                    if completed_chunks == total_chunks and alive_proxies:
+                    # Mark complete khi ĐÃ XONG HẾT tất cả chunks (BẤT KỂ có proxy sống hay không)
+                    if completed_chunks == total_chunks:
                         initial_fetch_done = True
                         log_to_render("🎉 INITIAL FETCH 100% HOÀN THÀNH! Chuyển sang MAINTENANCE MODE...")
+                        log_to_render(f"📊 Kết quả cuối cùng: {len(alive_proxies)} proxy sống từ {proxy_cache.get('total_checked', 0)} đã kiểm tra")
                     else:
                         log_to_render(f"⚠️ Chưa hoàn thành: {completed_chunks}/{total_chunks} chunks")
+                        log_to_render("🔄 Lý do: Có thể bị interrupt hoặc lỗi - sẽ thử lại")
                         sleep_time = 300  # Retry sau 5 phút
                     
                 else:
@@ -1308,12 +1324,28 @@ def debug_cache():
 def health_check():
     """Health check endpoint để test service"""
     log_to_render("💓 Health check được gọi")
+    
+    # Tính toán một số metrics hữu ích
+    alive_count = len(proxy_cache.get('http', []))
+    total_checked = proxy_cache.get('total_checked', 0)
+    success_rate = round(alive_count/total_checked*100, 1) if total_checked > 0 else 0
+    
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'cache_count': len(proxy_cache.get('http', [])),
+        'cache_count': alive_count,
         'service': 'proxy-validation-render',
-        'startup_status': startup_status
+        'startup_status': startup_status,
+        'metrics': {
+            'alive_proxies': alive_count,
+            'total_checked': total_checked,
+            'success_rate_percent': success_rate,
+            'last_update': proxy_cache.get('last_update', 'Never')
+        },
+        'fixed_bugs': [
+            'Loop bug fixed - no more restart from chunk 1',
+            'Condition fixed - completes after all chunks processed'
+        ]
     })
 
 @app.route('/api/force/initial', methods=['POST'])
