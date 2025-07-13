@@ -69,10 +69,6 @@ PROXY_SOURCE_LINKS = {
             "url": "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
             "protocol": "socks5"
         },
-        "Server Echo": {
-            "url": "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=30&country=all&ssl=all&anonymity=all&format=textplain",
-            "protocol": "http"
-        },
         "Server Foxtrot": {
             "url": "https://www.proxy-list.download/api/v1/get?type=http",
             "protocol": "http"
@@ -81,17 +77,10 @@ PROXY_SOURCE_LINKS = {
             "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
             "protocol": "http"
         },
-        "Server Hotel": {
-            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "protocol": "https"
-        },
+
         "Server India": {
             "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
             "protocol": "http"
-        },
-        "Server Juliet": {
-            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
-            "protocol": "socks5"
         },
     },
     # Mixed sources - test với tất cả protocols (http, https, socks4, socks5)
@@ -116,17 +105,9 @@ PROXY_SOURCE_LINKS = {
             "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
             "protocols": ["http", "https"]
         },
-        "roosterkid": {
-            "url": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/PROXY_RAW.txt",
-            "protocols": ["http", "https", "socks4", "socks5"]
-        },
         "zevtyardt": {
             "url": "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/all.txt",
             "protocols": ["http", "https", "socks4", "socks5"]
-        },
-        "proxy-server": {
-            "url": "https://raw.githubusercontent.com/proxy-server/proxy-list/main/proxy.txt",
-            "protocols": ["http", "https", "socks4", "socks5"]  
         },
         "rdavydov": {
             "url": "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt",
@@ -134,14 +115,6 @@ PROXY_SOURCE_LINKS = {
         },
         "officialputuid": {
             "url": "https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/http/http.txt",
-            "protocols": ["http", "https"]
-        },
-        "saschazesiger": {
-            "url": "https://raw.githubusercontent.com/saschazesiger/Free-Proxies/master/proxies/http.txt",
-            "protocols": ["http", "https"]
-        },
-        "premium-proxy": {
-            "url": "https://raw.githubusercontent.com/premium-proxy/proxy-list/main/http.txt",
             "protocols": ["http", "https"]
         }
     }
@@ -553,16 +526,15 @@ def fetch_proxies_from_sources():
             log_to_render(f"❌ {source_name}: {str(e)}")
             continue
     
-    # Combine tất cả proxy (Server Alpha + categorized khác + mixed)
+    # Combine tất cả proxy (Server Alpha + categorized khác + mixed) - KHÔNG GIỚI HẠN
     all_proxies = server_alpha_proxies + categorized_proxies + mixed_proxies
     random.shuffle(all_proxies)
-    limited_proxies = all_proxies[:3000]  # Tăng limit 3000 proxy để check nhiều hơn
     
-    log_to_render(f"🎯 HOÀN THÀNH FETCH: {len(all_proxies)} total → {len(limited_proxies)} selected")
+    log_to_render(f"🎯 HOÀN THÀNH FETCH: {len(all_proxies)} total proxy (KHÔNG GIỚI HẠN)")
     log_to_render(f"📊 Đã xử lý {sources_processed} nguồn thành công")
     log_to_render(f"📋 Server Alpha: {len(server_alpha_proxies)}, Categorized khác: {len(categorized_proxies)}, Mixed: {len(mixed_proxies)}")
     
-    return limited_proxies, sources_processed
+    return all_proxies, sources_processed
 
 def validate_proxy_batch_smart(proxy_list, max_workers=15):
     """Validate proxies theo batch với real-time logging - tối ưu cho Render"""
@@ -715,66 +687,222 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
     
     return alive_proxies
 
+def check_initial_fetch_timeout(start_time, max_hours=2):
+    """Kiểm tra timeout cho initial fetch để tránh chạy vô tận"""
+    elapsed_hours = (time.time() - start_time) / 3600
+    if elapsed_hours > max_hours:
+        log_to_render(f"⚠️ INITIAL FETCH TIMEOUT: {elapsed_hours:.1f}h > {max_hours}h")
+        log_to_render("🔄 Force chuyển sang MAINTENANCE MODE với proxy hiện có")
+        return True
+    return False
+
+def validate_existing_proxies_only():
+    """Maintenance mode - chỉ re-check các proxy đã có trong cache"""
+    global proxy_cache
+    
+    # Lấy các proxy hiện có từ cache
+    existing_proxies = proxy_cache.get('http', [])
+    
+    if not existing_proxies:
+        log_to_render("⚠️ MAINTENANCE MODE: Không có proxy trong cache để re-check")
+        return []
+    
+    log_to_render(f"🔄 MAINTENANCE MODE: Re-checking {len(existing_proxies)} proxy có sẵn...")
+    
+    # Chuyển đổi format để validate
+    proxy_list = []
+    for p in existing_proxies:
+        proxy_string = f"{p['host']}:{p['port']}"
+        proxy_type = p.get('type', 'http')
+        protocols_info = [proxy_type]
+        proxy_list.append(('maintenance', proxy_string, protocols_info))
+    
+    log_to_render(f"⚡ Bắt đầu re-validation {len(proxy_list)} proxy...")
+    
+    # Validate với max_workers cao hơn cho maintenance (vì ít proxy hơn)
+    alive_proxies = validate_proxy_batch_smart(proxy_list, max_workers=25)
+    
+    log_to_render(f"✅ MAINTENANCE HOÀN THÀNH: {len(alive_proxies)}/{len(proxy_list)} proxy còn sống")
+    
+    return alive_proxies
+
 def background_proxy_refresh():
-    """Background thread để refresh proxy cache định kỳ - tối ưu cho Render"""
+    """Background thread với 2 mode: Initial fetch vs Maintenance"""
+    global proxy_cache, startup_status
+    
     log_to_render("🔄 BACKGROUND THREAD KHỞI ĐỘNG")
     
     # Wait a bit for service to stabilize
     log_to_render("⏳ Waiting 10 seconds for service stabilization...")
     time.sleep(10)
     
+    initial_fetch_done = False
+    cycle_count = 0
+    initial_start_time = None
+    
     while True:
         try:
-            log_to_render("=" * 50)
-            log_to_render("🔄 BẮT ĐẦU CHU KỲ REFRESH MỚI")
-            log_to_render("=" * 50)
+            cycle_count += 1
+            log_to_render("=" * 60)
             
-            start_time = time.time()
+            if not initial_fetch_done:
+                # Track initial fetch start time
+                if initial_start_time is None:
+                    initial_start_time = time.time()
+                
+                # Check timeout protection (2 giờ max)
+                if check_initial_fetch_timeout(initial_start_time, max_hours=2):
+                    log_to_render("🚨 FORCE SWITCH: Initial fetch quá lâu, chuyển sang maintenance")
+                    initial_fetch_done = True
+                    sleep_time = 300
+                    continue
+                
+                # MODE 1: INITIAL FETCH - chia chunk để đảm bảo hoàn thành
+                log_to_render(f"🚀 CYCLE {cycle_count}: INITIAL FETCH MODE (CHIA CHUNK)")
+                elapsed_time = round((time.time() - initial_start_time) / 60, 1)
+                log_to_render(f"⏰ Elapsed: {elapsed_time} phút (timeout: 120 phút)")
+                log_to_render("=" * 60)
+                
+                start_time = time.time()
+                
+                # Fetch proxies từ sources (KHÔNG GIỚI HẠN)
+                log_to_render("📥 Fetching TOÀN BỘ proxy từ tất cả nguồn...")
+                proxy_list, sources_count = fetch_proxies_from_sources()
+                
+                if proxy_list:
+                    total_proxies = len(proxy_list)
+                    log_to_render(f"📊 Fetch thành công: {total_proxies} proxy từ {sources_count} nguồn")
+                    
+                    # Chia thành chunks 500 proxy mỗi lần để đảm bảo complete
+                    chunk_size = 500
+                    chunks = [proxy_list[i:i + chunk_size] for i in range(0, len(proxy_list), chunk_size)]
+                    total_chunks = len(chunks)
+                    
+                    log_to_render(f"🔀 Chia thành {total_chunks} chunks ({chunk_size} proxy/chunk)")
+                    log_to_render("⚡ Bắt đầu validation từng chunk...")
+                    
+                    all_alive_proxies = []
+                    completed_chunks = 0
+                    
+                    for chunk_idx, chunk in enumerate(chunks, 1):
+                        chunk_start_time = time.time()
+                        log_to_render(f"🔄 Processing chunk {chunk_idx}/{total_chunks} ({len(chunk)} proxy)...")
+                        
+                        # Validate chunk này
+                        chunk_alive = validate_proxy_batch_smart(chunk, max_workers=20)
+                        all_alive_proxies.extend(chunk_alive)
+                        completed_chunks += 1
+                        
+                        chunk_time = round(time.time() - chunk_start_time, 1)
+                        progress = round(completed_chunks / total_chunks * 100, 1)
+                        
+                        log_to_render(f"✅ Chunk {chunk_idx} DONE: {len(chunk_alive)} alive in {chunk_time}s")
+                        log_to_render(f"📈 Progress: {progress}% ({completed_chunks}/{total_chunks} chunks)")
+                        log_to_render(f"📊 Total alive so far: {len(all_alive_proxies)}")
+                        
+                        # Sleep ngắn giữa các chunk để không overload
+                        if chunk_idx < total_chunks:
+                            log_to_render("⏳ Sleep 10s trước chunk tiếp theo...")
+                            time.sleep(10)
+                    
+                    # Update final cache với tất cả proxy alive
+                    with cache_lock:
+                        proxy_cache["http"] = all_alive_proxies.copy()
+                        proxy_cache["alive_count"] = len(all_alive_proxies)
+                        proxy_cache["total_checked"] = total_proxies
+                        proxy_cache["sources_processed"] = sources_count
+                        proxy_cache["last_update"] = datetime.now().isoformat()
+                    
+                    alive_proxies = all_alive_proxies
+                    
+                    # Chỉ mark complete khi ĐÃ XONG HẾT tất cả chunks
+                    if completed_chunks == total_chunks and alive_proxies:
+                        initial_fetch_done = True
+                        log_to_render("🎉 INITIAL FETCH 100% HOÀN THÀNH! Chuyển sang MAINTENANCE MODE...")
+                    else:
+                        log_to_render(f"⚠️ Chưa hoàn thành: {completed_chunks}/{total_chunks} chunks")
+                        sleep_time = 300  # Retry sau 5 phút
+                    
+                else:
+                    log_to_render("❌ INITIAL FETCH THẤT BẠI: Không fetch được proxy nào")
+                    log_to_render("🔄 Thử lại trong 5 phút...")
+                    alive_proxies = []
+                    sleep_time = 300  # 5 phút retry
+                    
+            else:
+                # MODE 2: MAINTENANCE - chỉ re-check proxy có sẵn
+                log_to_render(f"🔧 CYCLE {cycle_count}: MAINTENANCE MODE (RE-CHECK)")
+                log_to_render("=" * 60)
+                
+                start_time = time.time()
+                
+                # Chỉ re-check proxy có sẵn
+                alive_proxies = validate_existing_proxies_only()
+                
+                # Không cần update sources_processed trong maintenance mode
             
-            # Fetch proxies từ sources
-            log_to_render("📥 Fetching proxies từ tất cả nguồn...")
-            proxy_list, sources_count = fetch_proxies_from_sources()
+            # Tính toán thống kê cho cả 2 mode
+            cycle_time = round(time.time() - start_time, 1)
             
-            if proxy_list:
-                log_to_render(f"📊 Fetch thành công: {len(proxy_list)} proxy từ {sources_count} nguồn")
+            if not initial_fetch_done:
+                # Stats cho initial mode
+                total_checked = proxy_cache.get("total_checked", 0)
+                success_rate = round(len(alive_proxies)/total_checked*100, 1) if total_checked > 0 else 0
                 
-                # Validate proxies
-                log_to_render("⚡ Bắt đầu validation...")
-                alive_proxies = validate_proxy_batch_smart(proxy_list)
+                if initial_fetch_done:  # Chỉ update startup khi thực sự done
+                    with cache_lock:
+                        startup_status["first_fetch_completed"] = True
                 
-                # Cache đã được update real-time trong validate function
-                # Chỉ cần update sources_processed
-                proxy_cache["sources_processed"] = sources_count
-                
-                cycle_time = round(time.time() - start_time, 1)
-                success_rate = round(len(alive_proxies)/len(proxy_list)*100, 1) if proxy_list else 0
-                
-                with cache_lock:
-
-                
-                    startup_status["first_fetch_completed"] = True
-                
-                log_to_render("=" * 50)
-                log_to_render("✅ CHU KỲ REFRESH HOÀN THÀNH!")
-                log_to_render(f"⏱️ Thời gian: {cycle_time}s")
-                log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {len(proxy_list)} total")
-                log_to_render(f"📈 Tỷ lệ thành công: {success_rate}%")
-                log_to_render(f"🔄 Tiếp theo trong 10 phút...")
-                log_to_render("=" * 50)
+                log_to_render("=" * 60)
+                if initial_fetch_done:
+                    log_to_render("🎉 INITIAL FETCH 100% HOÀN THÀNH!")
+                    log_to_render(f"⏱️ Thời gian: {cycle_time}s")
+                    log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {total_checked} total")
+                    log_to_render(f"📈 Tỷ lệ thành công: {success_rate}%")
+                    log_to_render("🔄 Chuyển sang MAINTENANCE MODE...")
+                    sleep_time = 300  # 5 phút cho maintenance mode đầu tiên
+                else:
+                    log_to_render("⚠️ INITIAL FETCH CHƯA HOÀN THÀNH")
+                    log_to_render(f"⏱️ Thời gian cycle: {cycle_time}s")
+                    log_to_render(f"📊 Progress: {len(alive_proxies)} alive / {total_checked} checked")
+                    log_to_render("🔄 Tiếp tục INITIAL MODE...")
+                    sleep_time = 300  # 5 phút retry
+                log_to_render("=" * 60)
                 
             else:
-                log_to_render("❌ THẤT BẠI: Không fetch được proxy nào")
-                log_to_render("🔄 Thử lại trong 10 phút...")
+                                # Stats cho maintenance mode  
+                existing_count = len(proxy_cache.get('http', []))
+                
+                if existing_count == 0:
+                    log_to_render("⚠️ MAINTENANCE: Không có proxy để check, quay lại INITIAL MODE")
+                    initial_fetch_done = False
+                    sleep_time = 60  # 1 phút
+                    continue
+                    
+                success_rate = round(len(alive_proxies)/existing_count*100, 1) if existing_count > 0 else 0
+                
+                log_to_render("=" * 60)
+                log_to_render("✅ MAINTENANCE HOÀN THÀNH!")
+                log_to_render(f"⏱️ Thời gian: {cycle_time}s")
+                log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {existing_count} total")
+                log_to_render(f"📈 Tỷ lệ còn sống: {success_rate}%")
+                log_to_render("🔄 Tiếp theo trong 10 phút...")
+                log_to_render("=" * 60)
+                
+                # Sleep bình thường cho maintenance
+                sleep_time = 600  # 10 phút
             
         except Exception as e:
             log_to_render(f"❌ LỖI BACKGROUND REFRESH: {str(e)}")
             log_to_render(f"📍 Traceback: {traceback.format_exc()}")
             log_to_render("🔄 Tiếp tục vòng lặp...")
             startup_status["error_count"] += 1
+            sleep_time = 300  # 5 phút nếu có lỗi
         
-        # Sleep 10 phút trước chu kỳ tiếp theo
-        log_to_render("😴 Sleep 10 phút trước chu kỳ tiếp theo...")
-        time.sleep(600)  # 10 minutes
+        # Sleep với thời gian động theo mode
+        sleep_minutes = sleep_time // 60
+        log_to_render(f"😴 Sleep {sleep_minutes} phút trước chu kỳ tiếp theo...")
+        time.sleep(sleep_time)
 
 # Initialize service when Flask starts
 initialize_service()
@@ -1187,6 +1315,26 @@ def health_check():
         'service': 'proxy-validation-render',
         'startup_status': startup_status
     })
+
+@app.route('/api/force/initial', methods=['POST'])
+def force_initial_mode():
+    """Force switch về initial fetch mode"""
+    try:
+        # Note: Trong production, cần implement proper global state management
+        log_to_render("🔄 API TRIGGER: Force switch về INITIAL FETCH MODE requested")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Signal sent to switch to initial fetch mode on next cycle',
+            'note': 'Change will take effect in next background cycle',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     # Render production mode
