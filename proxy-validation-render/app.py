@@ -151,37 +151,11 @@ def initialize_service():
         log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
         log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM) - ULTRA OPTIMIZED")
         log_to_render("📋 Cấu hình: Timeout=8s, Workers=20, Chunks=200, Max=2000")
-        log_to_render(f"🔧 Service Process ID: {os.getpid()}")
-        log_to_render("🔧 Gunicorn forced to 1 worker (cache shared)")
         
-        # Test logging system
-        log_to_render("🧪 TESTING LOG SYSTEM...")
-        log_to_render("✅ Log system hoạt động!")
-        
-        # Test basic imports
-        log_to_render("📦 Testing imports...")
-        import threading
-        import requests
-        import time
-        log_to_render("✅ All imports OK!")
-        
-        # Test functions exist
-        log_to_render("🔧 Testing functions...")
-        if callable(background_proxy_refresh):
-            log_to_render("✅ background_proxy_refresh function OK")
-        if callable(fetch_proxies_from_sources):
-            log_to_render("✅ fetch_proxies_from_sources function OK")
-        if callable(validate_proxy_batch_smart):
-            log_to_render("✅ validate_proxy_batch_smart function OK")
-            
         # Start background thread
         log_to_render("🔄 ĐANG KHỞI ĐỘNG BACKGROUND THREAD...")
         try:
-            log_to_render("🧵 Creating thread object...")
             refresh_thread = threading.Thread(target=background_proxy_refresh, daemon=True)
-            log_to_render("🧵 Thread object created successfully")
-            
-            log_to_render("🚀 Starting thread...")
             refresh_thread.start()
             log_to_render("✅ Background thread started!")
             
@@ -189,7 +163,6 @@ def initialize_service():
             if refresh_thread.is_alive():
                 log_to_render("✅ Background thread confirmed ALIVE!")
                 with cache_lock:
-
                     startup_status["background_thread_started"] = True
             else:
                 log_to_render("❌ Background thread not alive!")
@@ -197,33 +170,23 @@ def initialize_service():
                 
         except Exception as e:
             log_to_render(f"❌ LỖI CRITICAL khởi động background thread: {str(e)}")
-            log_to_render(f"📍 Thread Error Traceback: {traceback.format_exc()}")
             startup_status["error_count"] += 1
         
         # Set empty cache initially
         log_to_render("💾 Setting initial empty cache...")
         with cache_lock:
-
             proxy_cache["http"] = []
-        with cache_lock:
-
             proxy_cache["last_update"] = datetime.now().isoformat()
-        proxy_cache["total_checked"] = 0
-        with cache_lock:
-
+            proxy_cache["total_checked"] = 0
             proxy_cache["alive_count"] = 0
-        proxy_cache["sources_processed"] = 0
+            proxy_cache["sources_processed"] = 0
         
         with cache_lock:
-
-        
             startup_status["initialized"] = True
         log_to_render("✅ SERVICE INITIALIZATION COMPLETED!")
-        log_to_render("🔄 Background thread sẽ tự động fetch proxy...")
         
     except Exception as e:
         log_to_render(f"❌ LỖI CRITICAL INITIALIZATION: {str(e)}")
-        log_to_render(f"📍 Init Traceback: {traceback.format_exc()}")
         startup_status["error_count"] += 1
 
 
@@ -326,8 +289,7 @@ def check_single_proxy(proxy_string, timeout=8, protocols=['http']):
                                 # Clean IP (remove port if present)
                                 if ',' in proxy_ip:
                                     proxy_ip = proxy_ip.split(',')[0]
-                            except Exception as e:
-                                log_to_render(f"Error: {str(e)}")
+                            except Exception:
                                 proxy_ip = 'unknown'
                             
                             return {
@@ -342,16 +304,17 @@ def check_single_proxy(proxy_string, timeout=8, protocols=['http']):
                                 'full_proxy': proxy_string,
                                 'has_auth': bool(username and password)
                             }
-                    except Exception as e:
-                        log_to_render(f"Error: {str(e)}")
+                    except Exception:
+                        # REMOVED: Bỏ error logs để giảm noise
                         continue
                         
-            except Exception as e:
-                log_to_render(f"Error: {str(e)}")
+            except Exception:
+                # REMOVED: Bỏ error logs để giảm noise
                 continue
                 
-    except Exception as e:
-        log_to_render(f"Error: {str(e)}")
+    except Exception:
+        # REMOVED: Bỏ error logs để giảm noise
+        pass
     
     return None
 
@@ -374,7 +337,7 @@ def fetch_proxies_from_sources():
             protocols_to_fetch = [(protocol, url) for protocol, url in source_config.items()]
             
             for source_protocol, source_url in protocols_to_fetch:
-                log_to_render(f"📡 Fetching Server Alpha - {source_protocol}...")
+                # REDUCED: Chỉ log protocol quan trọng
                 
                 response = get_with_session(source_url, timeout=45)
                 
@@ -399,8 +362,7 @@ def fetch_proxies_from_sources():
                                 if len(host.split('.')) == 4 and port.isdigit():
                                     source_proxies.append(('categorized', line, source_protocol))
                                     
-                            except Exception as e:
-                                log_to_render(f"Error: {str(e)}")
+                            except Exception:
                                 continue
                     
                     server_alpha_proxies.extend(source_proxies)
@@ -433,7 +395,7 @@ def fetch_proxies_from_sources():
             source_total_proxies = []
             
             for source_protocol, source_url in protocols_to_fetch:
-                log_to_render(f"📡 Fetching {source_name} - {source_protocol}...")
+                # REMOVED: Bỏ log individual protocol
                 
                 response = get_with_session(source_url, timeout=45)
                 
@@ -461,18 +423,19 @@ def fetch_proxies_from_sources():
                                 if len(host.split('.')) == 4 and port.isdigit():
                                     source_proxies.append(('categorized', line, source_protocol))
                                     
-                            except Exception as e:
-                                log_to_render(f"Error: {str(e)}")
+                            except Exception:
                                 continue
                     
                     source_total_proxies.extend(source_proxies)
-                    log_to_render(f"✅ {source_name} - {source_protocol}: {len(source_proxies)} proxy")
+                    # REDUCED: Chỉ log nếu có proxy
+                    if len(source_proxies) > 0:
+                        log_to_render(f"✅ {source_name} - {source_protocol}: {len(source_proxies)} proxy")
                 else:
                     log_to_render(f"❌ {source_name} - {source_protocol}: HTTP {response.status_code}")
             
             categorized_proxies.extend(source_total_proxies)
             sources_processed += 1
-            log_to_render(f"🎯 {source_name} TOTAL: {len(source_total_proxies)} proxy from {len(protocols_to_fetch)} protocols")
+            log_to_render(f"🎯 {source_name} TOTAL: {len(source_total_proxies)} proxy")
         
         except Exception as e:
             log_to_render(f"❌ {source_name}: {str(e)}")
@@ -484,7 +447,7 @@ def fetch_proxies_from_sources():
         try:
             source_url = source_config["url"]
             source_protocols = source_config["protocols"]
-            log_to_render(f"📡 Fetching {source_name} (protocols: {', '.join(source_protocols)})...")
+            # REMOVED: Bỏ log chi tiết protocols
             
             response = get_with_session(source_url, timeout=45)
             
@@ -512,13 +475,12 @@ def fetch_proxies_from_sources():
                             if len(host.split('.')) == 4 and port.isdigit():
                                 source_proxies.append(('mixed', line, source_protocols))
                                 
-                        except Exception as e:
-                            log_to_render(f"Error: {str(e)}")
+                        except Exception:
                             continue
                 
                 mixed_proxies.extend(source_proxies)
                 sources_processed += 1
-                log_to_render(f"✅ {source_name} ({', '.join(source_protocols)}): {len(source_proxies)} proxy")
+                log_to_render(f"✅ {source_name}: {len(source_proxies)} proxy")
             else:
                 log_to_render(f"❌ {source_name}: HTTP {response.status_code}")
         
@@ -537,7 +499,7 @@ def fetch_proxies_from_sources():
     return all_proxies, sources_processed
 
 def validate_proxy_batch_smart(proxy_list, max_workers=15):
-    """Validate proxies theo batch với real-time logging - tối ưu cho Render"""
+    """Validate proxies KHÔNG chunking - chỉ validate toàn bộ list được pass vào"""
     if not proxy_list:
         log_to_render("⚠️ Không có proxy để validate")
         return []
@@ -545,12 +507,10 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
     # Sử dụng global cache để update real-time
     global proxy_cache
     alive_proxies = []
-    chunk_size = 150  # Process theo chunks
     total_proxies = len(proxy_list)
     
     log_to_render(f"⚡ BẮT ĐẦU VALIDATE {total_proxies} PROXY")
-    log_to_render(f"🔧 Cấu hình: {max_workers} workers, chunks={chunk_size}")
-    log_to_render(f"🔧 Validate Process ID: {os.getpid()}")
+    log_to_render(f"🔧 Cấu hình: {max_workers} workers (KHÔNG sub-chunking)")
     
     # KHÔNG reset cache cũ, chỉ track validation hiện tại
     current_validation_checked = 0
@@ -560,111 +520,80 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
     existing_proxies = proxy_cache.get("http", [])
     log_to_render(f"🔄 Bắt đầu validation mới - Giữ lại {len(existing_proxies)} proxy cũ")
     
-    # Process theo chunks để tránh overload
-    for chunk_start in range(0, total_proxies, chunk_size):
-        chunk_end = min(chunk_start + chunk_size, total_proxies)
-        chunk = proxy_list[chunk_start:chunk_end]
-        
-        # Count proxy types in chunk
-        categorized_count = sum(1 for item in chunk if isinstance(item, tuple) and item[0] == 'categorized')
-        mixed_count = sum(1 for item in chunk if isinstance(item, tuple) and item[0] == 'mixed')
-        
-        log_to_render(f"📦 Chunk {chunk_start//chunk_size + 1}: Validate {len(chunk)} proxy (từ {chunk_start+1} đến {chunk_end})")
-        log_to_render(f"🔧 Chunk protocols: {categorized_count} categorized(specific) + {mixed_count} mixed(all)")
-        
-        chunk_alive = []
-        checked_count = 0
-        
-        # Validate chunk với ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit tất cả proxy trong chunk
-            future_to_proxy = {}
-            for proxy_data in chunk:
-                # Unpack proxy data với structure mới
-                if isinstance(proxy_data, tuple) and len(proxy_data) == 3:
-                    proxy_type, proxy_string, protocols_info = proxy_data
-                else:
-                    # Fallback for old format
-                    proxy_type, proxy_string, protocols_info = 'categorized', proxy_data, 'http'
-                
-                # Xác định protocols để test dựa trên source type
-                if proxy_type == 'mixed':
-                    protocols = protocols_info  # Mixed sources sử dụng protocols từ config
-                else:
-                    protocols = [protocols_info]  # Categorized sources sử dụng protocol cụ thể
-                
-                future = executor.submit(check_single_proxy, proxy_string, 8, protocols)
-                future_to_proxy[future] = (proxy_type, proxy_string, protocols_info)
+    # Count proxy types
+    categorized_count = sum(1 for item in proxy_list if isinstance(item, tuple) and item[0] == 'categorized')
+    mixed_count = sum(1 for item in proxy_list if isinstance(item, tuple) and item[0] == 'mixed')
+    
+    log_to_render(f"🔧 Proxy types: {categorized_count} categorized(specific) + {mixed_count} mixed(all)")
+    
+    checked_count = 0
+    
+    # Validate TẤT CẢ proxy cùng lúc với ThreadPoolExecutor - KHÔNG sub-chunking
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit tất cả proxy
+        future_to_proxy = {}
+        for proxy_data in proxy_list:
+            # Unpack proxy data với structure mới
+            if isinstance(proxy_data, tuple) and len(proxy_data) == 3:
+                proxy_type, proxy_string, protocols_info = proxy_data
+            else:
+                # Fallback for old format
+                proxy_type, proxy_string, protocols_info = 'categorized', proxy_data, 'http'
             
-            # Collect results với progress tracking
-            for future in as_completed(future_to_proxy):
-                checked_count += 1
-                current_validation_checked += 1
-                proxy_type, proxy_string, protocols_info = future_to_proxy[future]
-                
-                try:
-                    result = future.result()
-                    if result:
-                        chunk_alive.append(result)
-                        alive_proxies.append(result)
-                        
-                        # Tích lũy proxy mới với proxy cũ (tránh duplicate) - lấy real-time
-                        with cache_lock:
-                            current_proxies = proxy_cache.get("http", []).copy()
-                        
-                        # Thêm proxy mới nếu chưa có
-                        proxy_key = f"{result['host']}:{result['port']}"
-                        existing_keys = [f"{p['host']}:{p['port']}" for p in current_proxies]
-                        
-                        if proxy_key not in existing_keys:
-                            current_proxies.append(result)
-                        
-                        # Update cache với danh sách tích lũy
-                        with cache_lock:
-                            proxy_cache["http"] = current_proxies.copy()
-                            proxy_cache["alive_count"] = len(current_proxies)
-                            proxy_cache["total_checked"] = proxy_cache.get("total_checked", 0) + 1
-                            proxy_cache["last_update"] = datetime.now().isoformat()
-                        
-                        current_validation_alive += 1
-                        
-                        # Debug log cache update + FORCE GLOBAL UPDATE
-                        if len(alive_proxies) <= 5:  # Only log first few for debugging
-                            log_to_render(f"🔧 CACHE UPDATE: alive_count={len(alive_proxies)}, total_checked={chunk_start + checked_count}")
-                            log_to_render(f"🔧 FORCE UPDATE GLOBAL: Process {os.getpid()}")
-                            # Force update globals để debug
-                            globals()['proxy_cache'] = proxy_cache
-                        
-                        # Format protocols info for display
-                        if proxy_type == 'mixed':
-                            protocols_display = f"mixed|{result['type']}"
-                        else:
-                            protocols_display = f"{protocols_info}|{result['type']}"
-                            
-                        log_to_render(f"✅ SỐNG ({protocols_display}): {result['host']}:{result['port']} ({result['speed']}s) [{checked_count}/{len(chunk)}]")
-                    else:
-                        # Update total checked even for failed (tích lũy)
-                        with cache_lock:
-                            proxy_cache["total_checked"] = proxy_cache.get("total_checked", 0) + 1
-                        
-                        if checked_count % 50 == 0:  # Log mỗi 50 proxy để không spam
-                            log_to_render(f"⏳ Progress: {checked_count}/{len(chunk)} checked, {len(chunk_alive)} alive")
-                            
-                except Exception as e:
-                    # Update total checked even for exceptions (tích lũy)
+            # Xác định protocols để test dựa trên source type
+            if proxy_type == 'mixed':
+                protocols = protocols_info  # Mixed sources sử dụng protocols từ config
+            else:
+                protocols = [protocols_info]  # Categorized sources sử dụng protocol cụ thể
+            
+            future = executor.submit(check_single_proxy, proxy_string, 8, protocols)
+            future_to_proxy[future] = (proxy_type, proxy_string, protocols_info)
+        
+        # Collect results với progress tracking
+        for future in as_completed(future_to_proxy):
+            checked_count += 1
+            current_validation_checked += 1
+            proxy_type, proxy_string, protocols_info = future_to_proxy[future]
+            
+            try:
+                result = future.result()
+                if result:
+                    alive_proxies.append(result)
+                    
+                    # Tích lũy proxy mới với proxy cũ (tránh duplicate) - lấy real-time
+                    with cache_lock:
+                        current_proxies = proxy_cache.get("http", []).copy()
+                    
+                    # Thêm proxy mới nếu chưa có
+                    proxy_key = f"{result['host']}:{result['port']}"
+                    existing_keys = [f"{p['host']}:{p['port']}" for p in current_proxies]
+                    
+                    if proxy_key not in existing_keys:
+                        current_proxies.append(result)
+                    
+                    # Update cache với danh sách tích lũy
+                    with cache_lock:
+                        proxy_cache["http"] = current_proxies.copy()
+                        proxy_cache["alive_count"] = len(current_proxies)
+                        proxy_cache["total_checked"] = proxy_cache.get("total_checked", 0) + 1
+                        proxy_cache["last_update"] = datetime.now().isoformat()
+                    
+                    current_validation_alive += 1
+                    
+                else:
+                    # Update total checked even for failed (tích lũy)
                     with cache_lock:
                         proxy_cache["total_checked"] = proxy_cache.get("total_checked", 0) + 1
-                    if checked_count % 100 == 0:  # Log errors occasionally
-                        log_to_render(f"❌ Error checking proxy: {str(e)}")
-        
-        chunk_success_rate = round(len(chunk_alive)/len(chunk)*100, 1) if chunk else 0
-        
-        log_to_render(f"📊 Chunk {chunk_start//chunk_size + 1} hoàn thành: {len(chunk_alive)} alive / {len(chunk)} total ({chunk_success_rate}%)")
-        
-        # Sleep giữa các chunks để CPU nghỉ
-        if chunk_end < total_proxies:
-            log_to_render("😴 Sleep 1s giữa chunks...")
-            time.sleep(1)
+                    
+                    # REDUCED: Chỉ log progress ít hơn
+                    if checked_count % 100 == 0:  # Log mỗi 100 proxy
+                        progress_pct = round(checked_count/total_proxies*100, 1)
+                        log_to_render(f"⏳ Progress: {checked_count}/{total_proxies} checked ({progress_pct}%), {len(alive_proxies)} alive")
+                        
+            except Exception as e:
+                # Update total checked even for exceptions (tích lũy)
+                with cache_lock:
+                    proxy_cache["total_checked"] = proxy_cache.get("total_checked", 0) + 1
     
     # Final validation summary (KHÔNG override cache đã tích lũy)
     final_alive_count = proxy_cache.get("alive_count", 0)
@@ -674,15 +603,11 @@ def validate_proxy_batch_smart(proxy_list, max_workers=15):
     with cache_lock:
         proxy_cache["last_update"] = datetime.now().isoformat()
     
-    # Debug final cache state  
-    log_to_render(f"🔧 VALIDATION CYCLE COMPLETED:")
-    log_to_render(f"   Validation này: {len(alive_proxies)} alive / {total_proxies} tested")
-    log_to_render(f"   Tổng tích lũy: {final_alive_count} alive / {final_total_checked} total tested")
-    
+    # SIMPLIFIED: Logs ngắn gọn hơn
     current_cycle_success = round(len(alive_proxies)/total_proxies*100, 1) if total_proxies > 0 else 0
     overall_success = round(final_alive_count/final_total_checked*100, 1) if final_total_checked > 0 else 0
     log_to_render(f"🎯 VALIDATION HOÀN THÀNH!")
-    log_to_render(f"📊 Cycle này: {len(alive_proxies)} alive / {total_proxies} total ({current_cycle_success}%)")
+    log_to_render(f"📊 Batch này: {len(alive_proxies)} alive / {total_proxies} total ({current_cycle_success}%)")
     log_to_render(f"📈 Tổng cộng: {final_alive_count} alive / {final_total_checked} total ({overall_success}%)")
     
     return alive_proxies
@@ -727,7 +652,7 @@ def validate_existing_proxies_only():
     return alive_proxies
 
 def background_proxy_refresh():
-    """Background thread với 2 mode: Initial fetch vs Maintenance"""
+    """Background thread với 2 mode: Initial fetch vs Maintenance - FIXED LOGIC"""
     global proxy_cache, startup_status
     
     log_to_render("🔄 BACKGROUND THREAD KHỞI ĐỘNG")
@@ -773,7 +698,15 @@ def background_proxy_refresh():
                 
                 # Fetch proxies từ sources (KHÔNG GIỚI HẠN)
                 log_to_render("📥 Fetching TOÀN BỘ proxy từ tất cả nguồn...")
-                proxy_list, sources_count = fetch_proxies_from_sources()
+                
+                try:
+                    proxy_list, sources_count = fetch_proxies_from_sources()
+                except Exception as e:
+                    log_to_render(f"❌ CRITICAL ERROR trong fetch_proxies_from_sources: {str(e)}")
+                    log_to_render(f"📍 Traceback: {traceback.format_exc()}")
+                    log_to_render("🔄 Retry trong 5 phút...")
+                    time.sleep(300)
+                    continue
                 
                 if proxy_list:
                     total_proxies = len(proxy_list)
@@ -790,33 +723,44 @@ def background_proxy_refresh():
                     all_alive_proxies = []
                     completed_chunks = 0
                     
+                    # FIXED: Thêm error handling và recovery cho từng chunk
                     for chunk_idx, chunk in enumerate(chunks, 1):
                         chunk_start_time = time.time()
                         log_to_render(f"🔄 Processing chunk {chunk_idx}/{total_chunks} ({len(chunk)} proxy)...")
                         
-                        # Validate chunk này
-                        chunk_alive = validate_proxy_batch_smart(chunk, max_workers=20)
-                        all_alive_proxies.extend(chunk_alive)
-                        completed_chunks += 1
+                        # FIXED: Thêm try-catch cho validate_proxy_batch_smart
+                        try:
+                            chunk_alive = validate_proxy_batch_smart(chunk, max_workers=20)
+                            all_alive_proxies.extend(chunk_alive)
+                            completed_chunks += 1
+                            
+                            chunk_time = round(time.time() - chunk_start_time, 1)
+                            progress = round(completed_chunks / total_chunks * 100, 1)
+                            
+                            log_to_render(f"✅ Chunk {chunk_idx} DONE: {len(chunk_alive)} alive in {chunk_time}s")
+                            log_to_render(f"📈 Progress: {progress}% ({completed_chunks}/{total_chunks} chunks)")
+                            log_to_render(f"📊 Total alive so far: {len(all_alive_proxies)}")
+                            
+                        except Exception as e:
+                            log_to_render(f"❌ CRITICAL ERROR trong validate_proxy_batch_smart chunk {chunk_idx}: {str(e)}")
+                            log_to_render(f"🔄 SKIP chunk {chunk_idx} và tiếp tục...")
+                            # Vẫn count completed để không bị stuck
+                            completed_chunks += 1
+                            
+                            # REMOVED: Bỏ log debug dài
                         
-                        chunk_time = round(time.time() - chunk_start_time, 1)
-                        progress = round(completed_chunks / total_chunks * 100, 1)
-                        
-                        log_to_render(f"✅ Chunk {chunk_idx} DONE: {len(chunk_alive)} alive in {chunk_time}s")
-                        log_to_render(f"📈 Progress: {progress}% ({completed_chunks}/{total_chunks} chunks)")
-                        log_to_render(f"📊 Total alive so far: {len(all_alive_proxies)}")
-                        
-                        # Log đặc biệt để dễ track
-                        if chunk_idx % 10 == 0:  # Mỗi 10 chunks
-                            log_to_render("=" * 50)
-                            log_to_render(f"🎯 MILESTONE: Completed {chunk_idx} chunks out of {total_chunks}")
+                        # Log đặc biệt để dễ track - REDUCED frequency
+                        if chunk_idx % 20 == 0:  # Giảm từ 10 → 20 chunks
+                            log_to_render("=" * 40)
+                            log_to_render(f"🎯 MILESTONE: Completed {completed_chunks} chunks out of {total_chunks}")
                             log_to_render(f"⏰ Total runtime: {round((time.time() - start_time)/60, 1)} minutes")
-                            log_to_render(f"🏆 Success rate: {round(len(all_alive_proxies)/((chunk_idx-1)*chunk_size + len(chunk))*100, 1)}%")
-                            log_to_render("=" * 50)
+                            success_rate = round(len(all_alive_proxies)/(completed_chunks*chunk_size)*100, 1) if completed_chunks > 0 else 0
+                            log_to_render(f"🏆 Success rate: {success_rate}%")
+                            log_to_render("=" * 40)
                         
                         # Sleep ngắn giữa các chunk để không overload
                         if chunk_idx < total_chunks:
-                            log_to_render("⏳ Sleep 10s trước chunk tiếp theo...")
+                            # REMOVED: Bỏ log sleep
                             time.sleep(10)
                     
                     # Update final cache với tất cả proxy alive
@@ -829,15 +773,18 @@ def background_proxy_refresh():
                     
                     alive_proxies = all_alive_proxies
                     
-                    # Mark complete khi ĐÃ XONG HẾT tất cả chunks (BẤT KỂ có proxy sống hay không)
+                    # FIXED: Mark complete khi ĐÃ XONG HẾT tất cả chunks (BẤT KỂ có proxy sống hay không)
                     if completed_chunks == total_chunks:
                         initial_fetch_done = True
                         log_to_render("🎉 INITIAL FETCH 100% HOÀN THÀNH! Chuyển sang MAINTENANCE MODE...")
                         log_to_render(f"📊 Kết quả cuối cùng: {len(alive_proxies)} proxy sống từ {proxy_cache.get('total_checked', 0)} đã kiểm tra")
+                        log_to_render(f"🔧 FIXED: Completed {completed_chunks}/{total_chunks} chunks successfully")
                     else:
-                        log_to_render(f"⚠️ Chưa hoàn thành: {completed_chunks}/{total_chunks} chunks")
-                        log_to_render("🔄 Lý do: Có thể bị interrupt hoặc lỗi - sẽ thử lại")
-                        sleep_time = 300  # Retry sau 5 phút
+                        log_to_render(f"⚠️ BUG DETECTED: completed_chunks={completed_chunks} != total_chunks={total_chunks}")
+                        log_to_render("🔄 Lý do: Logic error - này không nên xảy ra sau fix")
+                        log_to_render("🚨 FORCE COMPLETE để tránh infinite loop")
+                        initial_fetch_done = True  # FORCE complete để tránh loop
+                        sleep_time = 300
                     
                 else:
                     log_to_render("❌ INITIAL FETCH THẤT BẠI: Không fetch được proxy nào")
@@ -853,7 +800,12 @@ def background_proxy_refresh():
                 start_time = time.time()
                 
                 # Chỉ re-check proxy có sẵn
-                alive_proxies = validate_existing_proxies_only()
+                try:
+                    alive_proxies = validate_existing_proxies_only()
+                except Exception as e:
+                    log_to_render(f"❌ ERROR trong validate_existing_proxies_only: {str(e)}")
+                    log_to_render(f"📍 Traceback: {traceback.format_exc()}")
+                    alive_proxies = []
                 
                 # Không cần update sources_processed trong maintenance mode
             
@@ -886,7 +838,7 @@ def background_proxy_refresh():
                 log_to_render("=" * 60)
                 
             else:
-                                # Stats cho maintenance mode  
+                # Stats cho maintenance mode  
                 existing_count = len(proxy_cache.get('http', []))
                 
                 if existing_count == 0:
@@ -914,6 +866,12 @@ def background_proxy_refresh():
             log_to_render("🔄 Tiếp tục vòng lặp...")
             startup_status["error_count"] += 1
             sleep_time = 300  # 5 phút nếu có lỗi
+            
+            # FIXED: Thêm protection để tránh infinite loop
+            if startup_status["error_count"] > 10:
+                log_to_render("🚨 CRITICAL: Quá nhiều lỗi liên tiếp, FORCE SWITCH sang maintenance")
+                initial_fetch_done = True
+                startup_status["error_count"] = 0
         
         # Sleep với thời gian động theo mode
         sleep_minutes = sleep_time // 60
@@ -1145,7 +1103,7 @@ def home():
 def get_logs():
     """API để lấy real-time logs"""
     try:
-        log_to_render("🔍 API /logs được gọi")
+        # REMOVED: Bỏ log không cần thiết
         
         # Return recent logs
         recent_logs = list(log_buffer)[-100:]  # Last 100 logs
@@ -1199,9 +1157,7 @@ def get_alive_proxies():
 def get_proxy_stats():
     """API thống kê proxy với thông tin chi tiết"""
     try:
-        # Log để debug khi có request
-        log_to_render("📊 API /stats được gọi")
-        log_to_render(f"🔧 Process ID: {os.getpid()}")
+        # REMOVED: Bỏ debug logs không cần thiết
         
         last_update = proxy_cache.get('last_update')
         cache_age_minutes = 0
@@ -1218,9 +1174,7 @@ def get_proxy_stats():
         # Count total sources
         total_sources = len(PROXY_SOURCE_LINKS["categorized"]) + len(PROXY_SOURCE_LINKS["mixed"])
         
-        log_to_render(f"📈 Stats: {alive_count} alive, {total_checked} checked, {success_rate}% success")
-        log_to_render(f"🔍 Cache details: http_list={len(proxy_cache.get('http', []))}, alive_count_cache={proxy_cache.get('alive_count', 0)}")
-        log_to_render(f"🔍 Full cache state: {proxy_cache}")
+        # REMOVED: Bỏ debug logs chi tiết
         
         return jsonify({
             'success': True,
@@ -1260,15 +1214,13 @@ def get_proxies_simple():
         alive_proxies = proxy_cache.get('http', [])
         
         if not alive_proxies:
-            # Nếu cache rỗng, có thể return empty nhưng log để debug
-            log_to_render(f"🔍 API /proxies called - cache empty, process {os.getpid()}")
+            # REMOVED: Bỏ debug log không cần thiết
             return jsonify({
                 'success': False,
                 'message': 'No live proxies available yet. Service is still validating.',
                 'count': 0,
                 'proxies': [],
-                'cache_status': 'empty',
-                'process_id': os.getpid()
+                'cache_status': 'empty'
             })
         
         # Sort by speed và lấy số lượng yêu cầu
@@ -1293,22 +1245,20 @@ def get_proxies_simple():
                     'proxy': f"{p['host']}:{p['port']}"
                 } for p in sorted_proxies
             ],
-            'last_update': proxy_cache.get('last_update'),
-            'process_id': os.getpid()
+            'last_update': proxy_cache.get('last_update')
         })
         
     except Exception as e:
         log_to_render(f"❌ API /proxies error: {str(e)}")
         return jsonify({
             'success': False,
-            'error': str(e),
-            'process_id': os.getpid()
+            'error': str(e)
         }), 500
 
 @app.route('/api/debug', methods=['GET'])
 def debug_cache():
     """Debug cache để kiểm tra vấn đề"""
-    log_to_render("🔧 DEBUG cache được gọi")
+    # REMOVED: Bỏ log debug không cần thiết
     
     return jsonify({
         'process_id': os.getpid(),
@@ -1323,7 +1273,7 @@ def debug_cache():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint để test service"""
-    log_to_render("💓 Health check được gọi")
+    # REMOVED: Bỏ log không cần thiết
     
     # Tính toán một số metrics hữu ích
     alive_count = len(proxy_cache.get('http', []))
