@@ -57,10 +57,6 @@ PROXY_SOURCE_LINKS = {
             "https": "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/https.txt", 
             "socks5": "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/socks5.txt",
         },
-        "Network Beta": {
-            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "protocol": "http"
-        },
          "Network Beta sock4": {
             "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt",
             "protocol": "socks4"
