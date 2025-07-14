@@ -61,6 +61,14 @@ PROXY_SOURCE_LINKS = {
             "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
             "protocol": "http"
         },
+         "Network Beta sock4": {
+            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt",
+            "protocol": "socks4"
+        },
+         "Network Beta sock5": {
+            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+            "protocol": "socks5"
+        },
         "Gateway Pro": {
             "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", 
             "protocol": "http"
@@ -104,10 +112,6 @@ PROXY_SOURCE_LINKS = {
         "clarketm": {
             "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
             "protocols": ["http", "https"]
-        },
-        "zevtyardt": {
-            "url": "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/all.txt",
-            "protocols": ["http", "https", "socks4", "socks5"]
         },
         "rdavydov": {
             "url": "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt",
