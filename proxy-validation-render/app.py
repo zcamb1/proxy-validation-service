@@ -28,12 +28,18 @@ app = Flask(__name__)
 
 # Global log buffer để store logs cho real-time display
 log_buffer = deque(maxlen=500)  # Keep last 500 log entries
+
+# TARGET: Mục tiêu 1000 proxy live
+TARGET_LIVE_PROXIES = 1000
+
 startup_status = {
     "initialized": False,
     "background_thread_started": False,
     "first_fetch_completed": False,
     "error_count": 0,
-    "last_activity": None
+    "last_activity": None,
+    "target_achieved": False,  # Track nếu đã đạt target 1000 proxy
+    "existing_live_proxies": []  # Store proxy live từ maintenance mode để append
 }
 
 # Cache proxy sống
@@ -149,8 +155,9 @@ def initialize_service():
         
     try:
         log_to_render("🚀 KHỞI ĐỘNG PROXY VALIDATION SERVICE")
-        log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM) - ULTRA OPTIMIZED")
-        log_to_render("📋 Cấu hình: Timeout=8s, Workers=20, Chunks=200, Max=2000")
+        log_to_render("🔧 Tối ưu cho Render free plan (512MB RAM) - TARGET 1000 PROXY MODE")
+        log_to_render("📋 Cấu hình: Timeout=8s, Workers=20, Chunks=500, Target=1000 proxy live")
+        log_to_render(f"🎯 TARGET: Sẽ tiếp tục fetch cho đến khi đạt {TARGET_LIVE_PROXIES} proxy live")
         
         # Start background thread
         log_to_render("🔄 ĐANG KHỞI ĐỘNG BACKGROUND THREAD...")
@@ -622,7 +629,7 @@ def check_initial_fetch_timeout(start_time, max_hours=2):
     return False
 
 def validate_existing_proxies_only():
-    """Maintenance mode - chỉ re-check các proxy đã có trong cache"""
+    """Maintenance mode - re-check các proxy đã có và UPDATE cache với list live mới"""
     global proxy_cache
     
     # Lấy các proxy hiện có từ cache
@@ -647,7 +654,14 @@ def validate_existing_proxies_only():
     # Validate với max_workers cao hơn cho maintenance (vì ít proxy hơn)
     alive_proxies = validate_proxy_batch_smart(proxy_list, max_workers=25)
     
+    # UPDATE CACHE với proxy live vừa check được (QUAN TRỌNG!)
+    with cache_lock:
+        proxy_cache["http"] = alive_proxies.copy()  # Update với list mới
+        proxy_cache["alive_count"] = len(alive_proxies)
+        proxy_cache["last_update"] = datetime.now().isoformat()
+    
     log_to_render(f"✅ MAINTENANCE HOÀN THÀNH: {len(alive_proxies)}/{len(proxy_list)} proxy còn sống")
+    log_to_render(f"💾 CACHE UPDATED: {len(alive_proxies)} proxy live trong cache")
     
     return alive_proxies
 
@@ -695,6 +709,14 @@ def background_proxy_refresh():
                 log_to_render("=" * 60)
                 
                 start_time = time.time()
+                
+                # Check xem có proxy từ maintenance mode không
+                existing_live_proxies = startup_status.get("existing_live_proxies", [])
+                if existing_live_proxies:
+                    log_to_render(f"📚 APPEND MODE: Đã có {len(existing_live_proxies)} proxy live từ maintenance")
+                    log_to_render("📥 Sẽ THÊM proxy mới vào list hiện có...")
+                else:
+                    log_to_render("📚 FRESH MODE: Bắt đầu từ đầu, fetch toàn bộ proxy mới")
                 
                 # Fetch proxies từ sources (KHÔNG GIỚI HẠN)
                 log_to_render("📥 Fetching TOÀN BỘ proxy từ tất cả nguồn...")
@@ -763,22 +785,68 @@ def background_proxy_refresh():
                             # REMOVED: Bỏ log sleep
                             time.sleep(10)
                     
-                    # Update final cache với tất cả proxy alive
-                    with cache_lock:
-                        proxy_cache["http"] = all_alive_proxies.copy()
-                        proxy_cache["alive_count"] = len(all_alive_proxies)
-                        proxy_cache["total_checked"] = total_proxies
-                        proxy_cache["sources_processed"] = sources_count
-                        proxy_cache["last_update"] = datetime.now().isoformat()
+                    # SMART UPDATE: Append thêm vào proxy hiện có thay vì replace
+                    existing_live_proxies = startup_status.get("existing_live_proxies", [])
                     
-                    alive_proxies = all_alive_proxies
+                    if existing_live_proxies:
+                        log_to_render(f"📚 APPEND MODE: Có {len(existing_live_proxies)} proxy từ maintenance mode")
+                        log_to_render(f"➕ Thêm {len(all_alive_proxies)} proxy mới từ initial fetch")
+                        
+                        # Merge proxy: existing + new, loại bỏ duplicate theo host:port
+                        combined_proxies = existing_live_proxies.copy()
+                        existing_keys = {f"{p['host']}:{p['port']}" for p in existing_live_proxies}
+                        
+                        new_added = 0
+                        for new_proxy in all_alive_proxies:
+                            proxy_key = f"{new_proxy['host']}:{new_proxy['port']}"
+                            if proxy_key not in existing_keys:
+                                combined_proxies.append(new_proxy)
+                                existing_keys.add(proxy_key)
+                                new_added += 1
+                        
+                        log_to_render(f"✅ MERGE RESULT: {len(combined_proxies)} total ({new_added} mới thêm)")
+                        
+                        # Update cache với combined list
+                        with cache_lock:
+                            proxy_cache["http"] = combined_proxies.copy()
+                            proxy_cache["alive_count"] = len(combined_proxies)
+                            proxy_cache["total_checked"] = proxy_cache.get("total_checked", 0) + total_proxies
+                            proxy_cache["sources_processed"] = sources_count
+                            proxy_cache["last_update"] = datetime.now().isoformat()
+                            # Clear existing_live_proxies sau khi đã merge
+                            startup_status["existing_live_proxies"] = []
+                        
+                        alive_proxies = combined_proxies
+                    else:
+                        log_to_render("📚 FRESH MODE: Không có proxy từ maintenance, dùng proxy mới")
+                        # Update cache với proxy mới (fresh start)
+                        with cache_lock:
+                            proxy_cache["http"] = all_alive_proxies.copy()
+                            proxy_cache["alive_count"] = len(all_alive_proxies)
+                            proxy_cache["total_checked"] = total_proxies
+                            proxy_cache["sources_processed"] = sources_count
+                            proxy_cache["last_update"] = datetime.now().isoformat()
+                        
+                        alive_proxies = all_alive_proxies
                     
-                    # FIXED: Mark complete khi ĐÃ XONG HẾT tất cả chunks (BẤT KỂ có proxy sống hay không)
+                    # FIXED: Chỉ chuyển maintenance mode khi đạt TARGET 1000 proxy live
                     if completed_chunks == total_chunks:
-                        initial_fetch_done = True
-                        log_to_render("🎉 INITIAL FETCH 100% HOÀN THÀNH! Chuyển sang MAINTENANCE MODE...")
-                        log_to_render(f"📊 Kết quả cuối cùng: {len(alive_proxies)} proxy sống từ {proxy_cache.get('total_checked', 0)} đã kiểm tra")
-                        log_to_render(f"🔧 FIXED: Completed {completed_chunks}/{total_chunks} chunks successfully")
+                        if len(alive_proxies) >= TARGET_LIVE_PROXIES:
+                            initial_fetch_done = True
+                            with cache_lock:
+                                startup_status["target_achieved"] = True
+                                startup_status["existing_live_proxies"] = []  # Clear sau khi đạt target
+                            log_to_render(f"🎉 TARGET ACHIEVED! {len(alive_proxies)} >= {TARGET_LIVE_PROXIES} proxy live!")
+                            log_to_render("🔄 Chuyển sang MAINTENANCE MODE...")
+                            log_to_render(f"📊 Kết quả: {len(alive_proxies)} proxy sống từ {proxy_cache.get('total_checked', 0)} đã kiểm tra")
+                        else:
+                            log_to_render(f"⚠️ CHƯA ĐẠT TARGET: {len(alive_proxies)} < {TARGET_LIVE_PROXIES} proxy live")
+                            log_to_render("🔄 TIẾP TỤC INITIAL FETCH để tìm thêm proxy...")
+                            log_to_render("📥 Sẽ fetch thêm proxy từ sources trong cycle tiếp theo")
+                            # Không set initial_fetch_done = True, tiếp tục fetch
+                            # GIỮ LẠI proxy hiện có để merge trong cycle tiếp theo
+                            with cache_lock:
+                                startup_status["existing_live_proxies"] = alive_proxies.copy()
                     else:
                         log_to_render(f"⚠️ BUG DETECTED: completed_chunks={completed_chunks} != total_chunks={total_chunks}")
                         log_to_render("🔄 Lý do: Logic error - này không nên xảy ra sau fix")
@@ -823,17 +891,18 @@ def background_proxy_refresh():
                 
                 log_to_render("=" * 60)
                 if initial_fetch_done:
-                    log_to_render("🎉 INITIAL FETCH 100% HOÀN THÀNH!")
+                    log_to_render("🎉 TARGET ACHIEVED - CHUYỂN SANG MAINTENANCE MODE!")
                     log_to_render(f"⏱️ Thời gian: {cycle_time}s")
                     log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {total_checked} total")
+                    log_to_render(f"🎯 Target: {len(alive_proxies)}/{TARGET_LIVE_PROXIES} ({round(len(alive_proxies)/TARGET_LIVE_PROXIES*100, 1)}%)")
                     log_to_render(f"📈 Tỷ lệ thành công: {success_rate}%")
-                    log_to_render("🔄 Chuyển sang MAINTENANCE MODE...")
                     sleep_time = 300  # 5 phút cho maintenance mode đầu tiên
                 else:
-                    log_to_render("⚠️ INITIAL FETCH CHƯA HOÀN THÀNH")
+                    log_to_render("⚠️ INITIAL FETCH TIẾP TỤC - CHƯA ĐẠT TARGET")
                     log_to_render(f"⏱️ Thời gian cycle: {cycle_time}s")
                     log_to_render(f"📊 Progress: {len(alive_proxies)} alive / {total_checked} checked")
-                    log_to_render("🔄 Tiếp tục INITIAL MODE...")
+                    log_to_render(f"🎯 Target: {len(alive_proxies)}/{TARGET_LIVE_PROXIES} ({round(len(alive_proxies)/TARGET_LIVE_PROXIES*100, 1)}%)")
+                    log_to_render("🔄 Tiếp tục INITIAL MODE để đạt target...")
                     sleep_time = 300  # 5 phút retry
                 log_to_render("=" * 60)
                 
@@ -844,6 +913,21 @@ def background_proxy_refresh():
                 if existing_count == 0:
                     log_to_render("⚠️ MAINTENANCE: Không có proxy để check, quay lại INITIAL MODE")
                     initial_fetch_done = False
+                    with cache_lock:
+                        startup_status["target_achieved"] = False
+                    sleep_time = 60  # 1 phút
+                    continue
+                
+                # CHECK: Nếu proxy live < target, quay lại initial fetch NHƯNG GIỮ LẠI proxy hiện có
+                if len(alive_proxies) < TARGET_LIVE_PROXIES:
+                    log_to_render(f"⚠️ MAINTENANCE: Proxy live {len(alive_proxies)} < {TARGET_LIVE_PROXIES} target!")
+                    log_to_render("🔄 QUAY LẠI INITIAL FETCH để THÊM proxy vào list hiện có...")
+                    log_to_render(f"💾 GIỮ LẠI {len(alive_proxies)} proxy live từ maintenance mode")
+                    initial_fetch_done = False
+                    with cache_lock:
+                        startup_status["target_achieved"] = False
+                        # GIỮ LẠI proxy live hiện có trong cache để append thêm
+                        startup_status["existing_live_proxies"] = alive_proxies.copy()
                     sleep_time = 60  # 1 phút
                     continue
                     
@@ -853,6 +937,7 @@ def background_proxy_refresh():
                 log_to_render("✅ MAINTENANCE HOÀN THÀNH!")
                 log_to_render(f"⏱️ Thời gian: {cycle_time}s")
                 log_to_render(f"📊 Kết quả: {len(alive_proxies)} alive / {existing_count} total")
+                log_to_render(f"🎯 Target: {len(alive_proxies)}/{TARGET_LIVE_PROXIES} ({round(len(alive_proxies)/TARGET_LIVE_PROXIES*100, 1)}%)")
                 log_to_render(f"📈 Tỷ lệ còn sống: {success_rate}%")
                 log_to_render("🔄 Tiếp theo trong 10 phút...")
                 log_to_render("=" * 60)
@@ -865,7 +950,6 @@ def background_proxy_refresh():
             log_to_render(f"📍 Traceback: {traceback.format_exc()}")
             log_to_render("🔄 Tiếp tục vòng lặp...")
             startup_status["error_count"] += 1
-            sleep_time = 300  # 5 phút nếu có lỗi
             
             # FIXED: Thêm protection để tránh infinite loop
             if startup_status["error_count"] > 10:
@@ -992,8 +1076,8 @@ def home():
     <body>
         <div class="container">
             <div class="header">
-                <h1>🚀 Proxy Validation Service</h1>
-                <p>Real-time monitoring và logging - Tối ưu cho Render Free Plan</p>
+                <h1>🚀 Proxy Validation Service - Target 1000</h1>
+                <p>Real-time monitoring - Tự động tìm 1000 proxy live - Tối ưu cho Render Free Plan</p>
             </div>
             
             <div id="system-status" class="status status-error">
@@ -1037,6 +1121,8 @@ def home():
                         // Update stats
                         document.getElementById('stats').innerHTML = 
                             '<p><strong>Proxy sống:</strong> ' + data.alive_count + '</p>' +
+                            '<p><strong>🎯 Target:</strong> ' + data.alive_count + '/' + data.target_live_proxies + ' (' + data.target_progress + '%)</p>' +
+                            '<p><strong>Target đạt:</strong> ' + (data.target_achieved ? '✅' : '❌') + '</p>' +
                             '<p><strong>Tổng đã check:</strong> ' + data.total_checked + '</p>' +
                             '<p><strong>Tỷ lệ thành công:</strong> ' + data.success_rate + '%</p>' +
                             '<p><strong>Nguồn đã xử lý:</strong> ' + data.sources_processed + '/' + data.sources_count + '</p>' +
@@ -1046,14 +1132,17 @@ def home():
                         const statusEl = document.getElementById('current-status');
                         const statusContainer = document.getElementById('system-status');
                         
-                        if (data.alive_count > 50) {{
-                            statusEl.textContent = 'Service hoạt động tốt - ' + data.alive_count + ' proxy sống';
+                        if (data.target_achieved) {{
+                            statusEl.textContent = '🎉 TARGET ACHIEVED - ' + data.alive_count + ' proxy sống (≥1000)';
                             statusContainer.className = 'status status-success';
+                        }} else if (data.alive_count >= 500) {{
+                            statusEl.textContent = '⚡ Đang đạt target - ' + data.alive_count + '/' + data.target_live_proxies + ' proxy (' + data.target_progress + '%)';
+                            statusContainer.className = 'status status-info';
                         }} else if (data.alive_count > 0) {{
-                            statusEl.textContent = 'Service hoạt động - ' + data.alive_count + ' proxy sống';
+                            statusEl.textContent = '🔍 Đang tìm proxy - ' + data.alive_count + '/' + data.target_live_proxies + ' (' + data.target_progress + '%)';
                             statusContainer.className = 'status status-info';
                         }} else {{
-                            statusEl.textContent = 'Đang tìm proxy sống...';
+                            statusEl.textContent = 'Đang khởi động và tìm proxy sống...';
                             statusContainer.className = 'status status-error';
                         }}
                     }})
@@ -1181,18 +1270,21 @@ def get_proxy_stats():
             'alive_count': alive_count,
             'total_checked': total_checked,
             'success_rate': success_rate,
+            'target_live_proxies': TARGET_LIVE_PROXIES,
+            'target_progress': round(alive_count / TARGET_LIVE_PROXIES * 100, 1) if TARGET_LIVE_PROXIES > 0 else 0,
+            'target_achieved': startup_status.get('target_achieved', False),
             'last_update': last_update,
             'cache_age_minutes': cache_age_minutes,
             'sources_count': total_sources,
             'sources_processed': proxy_cache.get('sources_processed', 0),
             'categorized_sources': list(PROXY_SOURCE_LINKS["categorized"].keys()),
             'mixed_sources': list(PROXY_SOURCE_LINKS["mixed"].keys()),
-            'service_status': 'render_free_optimized',
+            'service_status': 'render_free_optimized_target_1000',
             'check_interval': '10 minutes',
             'timeout_setting': '6 seconds',
             'max_workers': 15,
-            'processing_mode': 'CHUNK_PROCESSING_800_MAX',
-            'chunk_size': 300,
+            'processing_mode': 'TARGET_1000_PROXY_MODE',
+            'chunk_size': 500,
             'render_plan': 'free_512mb'
         })
         
