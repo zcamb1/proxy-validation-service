@@ -305,139 +305,62 @@ def smart_proxy_request(count=50):
     return requested_proxies
 
 def worker1_continuous_fetch():
-    """WORKER 1: SMART fetch proxy từ sources - Optimized để tránh duplicate waste"""
-    log_to_render("🏭 WORKER 1: SMART Continuous fetch started")
+    """WORKER 1: Liên tục fetch proxy từ sources, không bao giờ dừng"""
+    log_to_render("🏭 WORKER 1: Continuous fetch started")
     
     fetch_cycle = 0
-    last_full_fetch = 0
     
     while worker_control["continuous_fetch_active"]:
         try:
             fetch_cycle += 1
-            current_fresh = len(proxy_pools["FRESH"])
-            fresh_needed = TARGET_POOLS["PRIMARY"] + TARGET_POOLS["STANDBY"] - current_fresh
+            fresh_needed = TARGET_POOLS["PRIMARY"] + TARGET_POOLS["STANDBY"] - len(proxy_pools["FRESH"])
             
-            # SMART FETCH LOGIC: Tránh fetch quá nhiều khi không cần
-            if fresh_needed <= 100 and not worker_control["emergency_mode"]:
-                log_to_render(f"😴 WORKER 1: FRESH sufficient ({current_fresh}), sleep 10 minutes")
-                time.sleep(600)  # Sleep longer when sufficient
+            if fresh_needed <= 0 and not worker_control["emergency_mode"]:
+                log_to_render("😴 WORKER 1: FRESH pool sufficient, sleep 5 minutes")
+                time.sleep(300)
                 continue
             
-            # INTELLIGENT FETCH STRATEGY
-            time_since_last_full = fetch_cycle - last_full_fetch
-            should_full_fetch = (
-                fresh_needed >= 800 or  # Cần nhiều proxy
-                worker_control["emergency_mode"] or  # Emergency mode
-                time_since_last_full >= 12  # 12 cycles = ~1 hour full refresh
-            )
+            log_to_render(f"📥 WORKER 1 CYCLE {fetch_cycle}: Fetch {fresh_needed} fresh proxy")
             
-            if should_full_fetch:
-                log_to_render(f"🚀 WORKER 1 CYCLE {fetch_cycle}: FULL FETCH (needed: {fresh_needed})")
-                last_full_fetch = fetch_cycle
-                
-                # Full fetch từ all sources
-                try:
-                    proxy_list, sources_count = fetch_proxies_from_sources()
-                    worker_control["emergency_mode"] = False
-                except Exception as e:
-                    log_to_render(f"❌ WORKER 1 FULL FETCH ERROR: {str(e)}")
-                    time.sleep(600)
-                    continue
-            else:
-                # PARTIAL FETCH: Chỉ fetch từ một vài sources nhanh
-                log_to_render(f"⚡ WORKER 1 CYCLE {fetch_cycle}: SMART FETCH (needed: {fresh_needed})")
-                try:
-                    proxy_list = fetch_proxies_partial_smart(fresh_needed)
-                    sources_count = 3  # Partial fetch từ 3 sources
-                except Exception as e:
-                    log_to_render(f"❌ WORKER 1 SMART FETCH ERROR: {str(e)}")
-                    time.sleep(300)
-                    continue
+            # Fetch proxy từ sources
+            try:
+                proxy_list, sources_count = fetch_proxies_from_sources()
+                worker_control["emergency_mode"] = False  # Reset emergency sau successful fetch
+            except Exception as e:
+                log_to_render(f"❌ WORKER 1 FETCH ERROR: {str(e)}")
+                time.sleep(600)  # 10 minutes wait on fetch error
+                continue
             
             if proxy_list and len(proxy_list) > 0:
-                # Add to FRESH pool với smart deduplication
+                # Add to FRESH pool
                 with pool_locks["FRESH"]:
-                    # Build existing set từ ALL pools để tránh duplicate hoàn toàn
-                    existing_all = set()
-                    for pool_name in ["PRIMARY", "STANDBY", "EMERGENCY", "FRESH"]:
-                        for p in proxy_pools[pool_name]:
-                            proxy_string = p[1] if isinstance(p, tuple) else p
-                            existing_all.add(proxy_string)
-                    
+                    # Remove duplicates based on host:port
+                    existing_fresh = {f"{p[1] if isinstance(p, tuple) else p}" for p in proxy_pools["FRESH"]}
                     new_proxies = []
+                    
                     for proxy_data in proxy_list:
                         proxy_string = proxy_data[1] if isinstance(proxy_data, tuple) else proxy_data
-                        if proxy_string not in existing_all:
+                        if proxy_string not in existing_fresh:
                             new_proxies.append(proxy_data)
-                            existing_all.add(proxy_string)
-                        
-                        # Limit adding để tránh overflow
-                        if len(new_proxies) >= fresh_needed * 2:  # Max 2x needed
-                            break
+                            existing_fresh.add(proxy_string)
                     
                     proxy_pools["FRESH"].extend(new_proxies)
                     
-                    # Smart FRESH pool management
-                    if len(proxy_pools["FRESH"]) > 2500:
-                        proxy_pools["FRESH"] = proxy_pools["FRESH"][-2000:]
+                    # Limit FRESH pool size để tránh memory overflow
+                    if len(proxy_pools["FRESH"]) > 3000:
+                        proxy_pools["FRESH"] = proxy_pools["FRESH"][-2000:]  # Keep latest 2000
                 
-                log_to_render(f"✅ WORKER 1: Added {len(new_proxies)} NEW proxy (total FRESH: {len(proxy_pools['FRESH'])})")
+                log_to_render(f"✅ WORKER 1: Added {len(new_proxies)} fresh proxy (total FRESH: {len(proxy_pools['FRESH'])})")
             else:
-                log_to_render("⚠️ WORKER 1: No new proxy found, extend sleep")
+                log_to_render("⚠️ WORKER 1: No proxy fetched, retry in 10 minutes")
             
-            # ADAPTIVE SLEEP: Ngủ lâu hơn khi đã đủ proxy
-            if current_fresh >= 1000:
-                sleep_time = 900  # 15 minutes khi đủ proxy
-            elif worker_control["emergency_mode"]:
-                sleep_time = 120  # 2 minutes emergency
-            else:
-                sleep_time = 300  # 5 minutes normal
-                
+            # Sleep dựa trên emergency mode
+            sleep_time = 300 if not worker_control["emergency_mode"] else 60  # 5min normal, 1min emergency
             time.sleep(sleep_time)
             
         except Exception as e:
             log_to_render(f"❌ WORKER 1 CRITICAL ERROR: {str(e)}")
             time.sleep(300)
-
-def fetch_proxies_partial_smart(needed_count):
-    """SMART partial fetch chỉ từ sources nhanh nhất"""
-    log_to_render("⚡ SMART PARTIAL FETCH: Targeting fast sources only")
-    
-    # Chọn sources nhanh nhất (ít proxy nhưng chất lượng cao)
-    fast_sources = [
-        ("https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all", "proxyscrape-http"),
-        ("https://api.proxyscrape.com/v2/?request=get&protocol=socks5&timeout=10000&country=all", "proxyscrape-socks5"),
-        ("https://raw.githubusercontent.com/hendrikbgr/Free-Proxy-Repo/master/proxy_list.txt", "hendrikbgr")
-    ]
-    
-    all_proxies = []
-    for url, name in fast_sources:
-        try:
-            response = get_with_session(url, timeout=10)
-            if response.status_code == 200:
-                proxies = response.text.strip().split('\n')
-                valid_proxies = [p.strip() for p in proxies if p.strip() and ':' in p.strip()]
-                all_proxies.extend([(None, p) for p in valid_proxies])
-                log_to_render(f"⚡ {name}: {len(valid_proxies)} proxy")
-                
-                # Dừng khi đủ proxy cần thiết
-                if len(all_proxies) >= needed_count * 3:
-                    break
-        except Exception as e:
-            log_to_render(f"⚠️ {name} failed: {str(e)}")
-            continue
-    
-    # Remove duplicates
-    unique_proxies = []
-    seen = set()
-    for proxy_data in all_proxies:
-        proxy_string = proxy_data[1]
-        if proxy_string not in seen:
-            unique_proxies.append(proxy_data)
-            seen.add(proxy_string)
-    
-    log_to_render(f"⚡ SMART FETCH result: {len(unique_proxies)} unique proxy")
-    return unique_proxies
 
 def worker2_rolling_validation():
     """WORKER 2: Rolling validation từ FRESH → STANDBY → PRIMARY"""
@@ -462,45 +385,18 @@ def worker2_rolling_validation():
             if fresh_to_validate:
                 log_to_render(f"🔍 WORKER 2: Validating {len(fresh_to_validate)} FRESH proxy...")
                 
-                # 🔧 FORMAT CONVERSION: Convert FRESH format to validation format
-                validation_format = []
-                for proxy_data in fresh_to_validate:
-                    if isinstance(proxy_data, tuple) and len(proxy_data) >= 2:
-                        proxy_type, proxy_string = proxy_data[0], proxy_data[1]
-                        # Default to mixed protocol for FRESH proxy (try all types)
-                        validation_format.append(('mixed', proxy_string, ['http', 'https', 'socks4', 'socks5']))
-                    else:
-                        # Fallback for other formats
-                        proxy_string = proxy_data if isinstance(proxy_data, str) else str(proxy_data)
-                        validation_format.append(('mixed', proxy_string, ['http', 'https', 'socks4', 'socks5']))
-                
-                log_to_render(f"🔧 WORKER 2: Converted {len(validation_format)} proxy to validation format")
-                
                 try:
-                    validated_proxies = validate_proxy_batch_smart(validation_format, max_workers=15)
+                    validated_proxies = validate_proxy_batch_smart(fresh_to_validate, max_workers=15)
                     
                     if validated_proxies:
-                        # 📊 DEBUG: Log validated proxy details
-                        log_to_render(f"🔍 WORKER 2 DEBUG: Got {len(validated_proxies)} validated proxy")
-                        if len(validated_proxies) > 0:
-                            sample_proxy = validated_proxies[0]
-                            log_to_render(f"🔍 Sample validated proxy: {sample_proxy}")
-                        
                         with pool_locks["STANDBY"]:
-                            before_count = len(proxy_pools["STANDBY"])
                             proxy_pools["STANDBY"].extend(validated_proxies)
-                            after_count = len(proxy_pools["STANDBY"])
-                            
                             # Keep STANDBY pool size reasonable
                             if len(proxy_pools["STANDBY"]) > TARGET_POOLS["STANDBY"] * 2:
                                 proxy_pools["STANDBY"] = proxy_pools["STANDBY"][-TARGET_POOLS["STANDBY"]:]
-                                final_count = len(proxy_pools["STANDBY"])
-                                log_to_render(f"✂️ WORKER 2: Trimmed STANDBY pool to {final_count}")
                         
-                        log_to_render(f"✅ WORKER 2: {len(validated_proxies)} proxy added to STANDBY ({before_count}→{after_count})")
+                        log_to_render(f"✅ WORKER 2: {len(validated_proxies)} proxy added to STANDBY")
                         pool_stats["STANDBY"]["last_validation"] = datetime.now().isoformat()
-                    else:
-                        log_to_render(f"❌ WORKER 2: No validated proxy returned from validation!")
                     
                 except Exception as e:
                     log_to_render(f"❌ WORKER 2 VALIDATION ERROR: {str(e)}")
@@ -1398,7 +1294,7 @@ def initialize_ultra_smart_service():
         except Exception as e:
             log_to_render(f"❌ LỖI khởi động workers: {str(e)}")
             startup_status["error_count"] += 1
-            
+        
         # Initialize pool stats
         pool_stats["last_update"] = datetime.now().isoformat()
         pool_stats["total_served"] = 0
@@ -2639,4 +2535,4 @@ if __name__ == '__main__':
         app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
     except Exception as e:
         log_to_render(f"❌ LỖI PRODUCTION: {str(e)}")
-        print(f"Error: {e}") 
+        print(f"Error: {e}")
