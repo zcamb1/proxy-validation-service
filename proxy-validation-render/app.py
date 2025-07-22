@@ -157,15 +157,35 @@ PROXY_SOURCE_LINKS = {
          "socks4": "https://raw.githubusercontent.com/dpangestuw/Free-Proxy/refs/heads/main/socks4_proxies.txt",
          "socks5": "https://raw.githubusercontent.com/dpangestuw/Free-Proxy/refs/heads/main/socks5_proxies.txt",
         },
-         "Network Beta sock5": {
+         "Server TheSpeedX sock5": {
             "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
             "protocol": "socks5"
         },
-        "Gateway Pro": {
+        "Server hookzof": {
+            "url": "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
+            "protocol": "socks5"
+        },
+        "Server ErcinDedeoglu": {
+            "https": "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/https.txt",
+            "socks4": "https://raw.githubusercontent.com/ErcinDedeoglu/proxy-list/main/socks4.txt",
+            "socks5": "https://raw.githubusercontent.com/ErcinDedeoglu/proxy-list/main/socks5.txt",
+        },
+        "Server casa-ls": {
+            "http": "https://raw.githubusercontent.com/casa-ls/proxy-list/main/http",
+            "https": "https://raw.githubusercontent.com/casa-ls/proxy-list/main/socks4", 
+            "socks5": "https://raw.githubusercontent.com/casa-ls/proxy-list/main/socks5",
+        },
+        "Server monosans": {
             "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", 
             "protocol": "http"
         },
-        "Server Roosterkid": {
+        "Server VMHeaven": {
+            "http": "https://raw.githubusercontent.com/vmheaven/VMHeaven-Free-Proxy-Updated/main/http.txt",
+            "https": "https://raw.githubusercontent.com/vmheaven/VMHeaven-Free-Proxy-Updated/main/https.txt", 
+            "socks4": "https://raw.githubusercontent.com/vmheaven/VMHeaven-Free-Proxy-Updated/main/socks4.txt",
+            "socks5": "https://raw.githubusercontent.com/vmheaven/VMHeaven-Free-Proxy-Updated/main/socks5.txt",
+        },
+        "Server hookzof": {
             "url": "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
             "protocol": "socks5"
         },
