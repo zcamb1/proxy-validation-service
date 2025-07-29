@@ -639,9 +639,11 @@ def check_single_proxy(proxy_string, timeout=8, protocols=['http']):
             
         host, port = host_port.strip().split(':', 1)
         
-        # Test URLs - sử dụng ElevenLabs API để test proxy
+        # Test URLs 
         test_urls = [
-            'https://api.elevenlabs.io/v1/voices',
+            'http://httpbin.org/ip',
+            'http://ip-api.com/json',
+            'https://api.ipify.org',
         ]
         
         # Test với từng protocol
@@ -679,8 +681,15 @@ def check_single_proxy(proxy_string, timeout=8, protocols=['http']):
                         if response.status_code == 200:
                             speed = round(time.time() - start_time, 2)
                             
-                            # Proxy hoạt động tốt với ElevenLabs API
-                            proxy_ip = host
+                            # Get proxy IP
+                            try:
+                                ip_data = response.json()
+                                proxy_ip = ip_data.get('origin', ip_data.get('query', ip_data.get('ip', 'unknown')))
+                                # Clean IP (remove port if present)
+                                if ',' in proxy_ip:
+                                    proxy_ip = proxy_ip.split(',')[0]
+                            except Exception:
+                                proxy_ip = 'unknown'
                             
                             return {
                                 'host': host,
